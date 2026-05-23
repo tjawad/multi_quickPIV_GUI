@@ -60,6 +60,41 @@ class LoadedPIVResult:
     w: np.ndarray | None = None
     zg: np.ndarray | None = None
 
+    # Optional 3D/VTK validity mask.
+    valid_interrogation: np.ndarray | None = None
+
+    @property
+    def spatial_ndim(self) -> int:
+        """Return 2 for U/V results and 3 for U/V/W results."""
+        return 3 if self.w is not None else 2
+
+    @property
+    def is_2d(self) -> bool:
+        """Return True if this is a 2D PIV result."""
+        return self.spatial_ndim == 2
+
+    @property
+    def is_3d(self) -> bool:
+        """Return True if this is a 3D PIV result."""
+        return self.spatial_ndim == 3
+
+    @property
+    def field_count(self) -> int:
+        """Return the number of vector fields stored in this result."""
+        if self.is_2d:
+            if self.u.ndim == 2:
+                return 1
+            if self.u.ndim == 3:
+                return int(self.u.shape[0])
+
+        if self.is_3d:
+            if self.u.ndim == 3:
+                return 1
+            if self.u.ndim == 4:
+                return int(self.u.shape[0])
+
+        raise ValueError(f"Unsupported loaded PIV result shape: {self.u.shape}")
+
 
 def robust_read_h5(path: str | Path) -> tuple[np.ndarray, str]:
     """
@@ -191,6 +226,7 @@ def load_saved_piv_result(path: str | Path) -> LoadedPIVResult:
     """
     path_obj = Path(path)
     suffix = path_obj.suffix.lower()
+    valid_interrogation = None
 
     if suffix == ".npz":
         with np.load(path_obj) as data:
@@ -201,6 +237,11 @@ def load_saved_piv_result(path: str | Path) -> LoadedPIVResult:
             yg = np.array(data["ygrid"])
             zg = np.array(data["zgrid"]) if "zgrid" in data else None
             sn = np.array(data["SN"]) if "SN" in data else None
+            valid_interrogation = (
+                np.array(data["valid_interrogation"])
+                if "valid_interrogation" in data
+                else None
+            )
 
     elif suffix == ".h5":
         with h5py.File(path_obj, "r") as hf:
@@ -211,8 +252,33 @@ def load_saved_piv_result(path: str | Path) -> LoadedPIVResult:
             yg = np.array(hf["ygrid"])
             zg = np.array(hf["zgrid"]) if "zgrid" in hf else None
             sn = np.array(hf["SN"]) if "SN" in hf else None
+            valid_interrogation = (
+                np.array(hf["valid_interrogation"])
+                if "valid_interrogation" in hf
+                else None
+            )
     else:
         raise ValueError("Invalid result file type. Supported: .npz, .h5")
+
+    if u.shape != v.shape:
+        raise ValueError("Saved PIV result has mismatched U and V shapes.")
+
+    if w is not None and w.shape != u.shape:
+        raise ValueError("Saved 3D PIV result has mismatched U, V, and W shapes.")
+
+    if xg.shape != yg.shape:
+        raise ValueError("Saved PIV result has mismatched xgrid and ygrid shapes.")
+
+    if w is not None:
+        if zg is None:
+            raise ValueError("Saved 3D PIV result contains W but no zgrid.")
+        if zg.shape != xg.shape:
+            raise ValueError("Saved 3D PIV result has mismatched grid shapes.")
+
+    if valid_interrogation is not None and valid_interrogation.shape != u.shape:
+        raise ValueError(
+            "Saved valid_interrogation shape does not match U/V/W shape."
+        )
 
     return LoadedPIVResult(
         u=u,
@@ -222,5 +288,6 @@ def load_saved_piv_result(path: str | Path) -> LoadedPIVResult:
         yg=yg,
         zg=zg,
         sn=sn,
+        valid_interrogation=valid_interrogation,
         source_path=path_obj,
     )

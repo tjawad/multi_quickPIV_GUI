@@ -25,7 +25,10 @@ class BatchRunDialog(simpledialog.Dialog):
         self.result: BatchRunOptions | None = None
         self.var_preview_mode = tk.StringVar(value="live")
         self.var_export_after = tk.BooleanVar(value=False)
-        self.var_export_format = tk.StringVar(value="npz")
+        self.var_export_npz = tk.BooleanVar(value=False)
+        self.var_export_h5 = tk.BooleanVar(value=False)
+        self.var_export_vtk = tk.BooleanVar(value=False)
+        self.export_checkbuttons: list[ttk.Checkbutton] = []
         super().__init__(parent, title="Batch PIV Options")
 
     def body(self, master):
@@ -61,18 +64,28 @@ class BatchRunDialog(simpledialog.Dialog):
             command=self._toggle_export_widgets,
         ).grid(row=0, column=0, columnspan=2, sticky="w")
 
-        ttk.Label(export_frame, text="Format").grid(
-            row=1, column=0, sticky="w", pady=(8, 0)
-        )
-
-        self.export_format_combo = ttk.Combobox(
+        npz_check = ttk.Checkbutton(
             export_frame,
-            textvariable=self.var_export_format,
-            values=("npz", "h5"),
-            state="readonly",
-            width=10,
+            text="NumPy zipped (.npz)",
+            variable=self.var_export_npz,
         )
-        self.export_format_combo.grid(row=1, column=1, sticky="w", pady=(8, 0))
+        npz_check.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+        h5_check = ttk.Checkbutton(
+            export_frame,
+            text="HDF5 (.h5)",
+            variable=self.var_export_h5,
+        )
+        h5_check.grid(row=2, column=0, columnspan=2, sticky="w")
+
+        vtk_check = ttk.Checkbutton(
+            export_frame,
+            text="VTK (.vtk)",
+            variable=self.var_export_vtk,
+        )
+        vtk_check.grid(row=3, column=0, columnspan=2, sticky="w")
+
+        self.export_checkbuttons = [npz_check, h5_check, vtk_check]
 
         self._toggle_export_widgets()
         return preview_frame
@@ -89,18 +102,35 @@ class BatchRunDialog(simpledialog.Dialog):
         box.pack()
 
     def _toggle_export_widgets(self) -> None:
-        state = "readonly" if self.var_export_after.get() else "disabled"
-        self.export_format_combo.config(state=state)
+        state = "normal" if self.var_export_after.get() else "disabled"
+        for widget in self.export_checkbuttons:
+            widget.config(state=state)
 
     def apply(self) -> None:
-        export_format = self.var_export_format.get()
+        export_after = bool(self.var_export_after.get())
+
         self.result = BatchRunOptions(
             preview_mode=self.var_preview_mode.get(),
-            export_after_run=bool(self.var_export_after.get()),
-            export_npz=(export_format == "npz" and bool(self.var_export_after.get())),
-            export_h5=(export_format == "h5" and bool(self.var_export_after.get())),
-            export_vtk=False,
+            export_after_run=export_after,
+            export_npz=export_after and bool(self.var_export_npz.get()),
+            export_h5=export_after and bool(self.var_export_h5.get()),
+            export_vtk=export_after and bool(self.var_export_vtk.get()),
         )
+
+    def validate(self) -> bool:
+        if self.var_export_after.get() and not (
+            self.var_export_npz.get()
+            or self.var_export_h5.get()
+            or self.var_export_vtk.get()
+        ):
+            messagebox.showerror(
+                "Export selection required",
+                "Please select at least one export option.",
+                parent=self,
+            )
+            return False
+
+        return True
 
 class BatchExportDialog(simpledialog.Dialog):
     """Modal dialog for configuring 3D batch export outputs."""

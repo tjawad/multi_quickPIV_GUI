@@ -5,13 +5,16 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog
 import tkinter.ttk as ttk
+import numpy as np
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from multi_quickpiv_gui.backend.export import (
+    save_batch_2d_vector_fields_to_vtk,
     save_batch_result,
     save_batch_vector_fields_to_vtk,
+    save_loaded_piv_result,
     save_pair_result,
     save_piv_animation,
 )
@@ -39,6 +42,7 @@ from multi_quickpiv_gui.gui.dialogs import (
     ThreeDLoadInfoDialog,
 )
 from multi_quickpiv_gui.runtime.batch import BatchRuntimeState
+from multi_quickpiv_gui.backend.core import apply_postprocessing
 
 from multi_quickpiv_gui.gui.params_form import (
     ParamsFormState,
@@ -213,25 +217,32 @@ class MultiQuickPIVApp:
         self.btn_abort.grid(row=7, column=0, sticky="ew", pady=4)
         self.btn_abort.config(state="disabled")
 
+        self.btn_apply_postprocess = ttk.Button(
+            parent,
+            text="Apply post-processing",
+            command=self.on_apply_postprocessing,
+        )
+        self.btn_apply_postprocess.grid(row=8, column=0, sticky="ew", pady=4)
+
         self.btn_export = ttk.Button(
             parent, text="Export current result", command=self.on_export_current
         )
-        self.btn_export.grid(row=8, column=0, sticky="ew", pady=4)
+        self.btn_export.grid(row=9, column=0, sticky="ew", pady=4)
 
         self.btn_export_video = ttk.Button(
             parent, text="Export video / GIF", command=self.on_export_animation
         )
-        self.btn_export_video.grid(row=9, column=0, sticky="ew", pady=4)
+        self.btn_export_video.grid(row=10, column=0, sticky="ew", pady=4)
 
         ttk.Separator(parent, orient="horizontal").grid(
-            row=10, column=0, sticky="ew", pady=(12, 8)
+            row=11, column=0, sticky="ew", pady=(12, 8)
         )
 
         ttk.Label(parent, text="Batch progress").grid(
-            row=11, column=0, sticky="w", pady=(0, 4)
+            row=12, column=0, sticky="w", pady=(0, 4)
         )
         self.progress = ttk.Progressbar(parent, mode="determinate", length=220)
-        self.progress.grid(row=12, column=0, sticky="ew")
+        self.progress.grid(row=13, column=0, sticky="ew")
         
     def _set_batch_running_state(self) -> None:
         """Disable normal actions and enable batch controls during a running batch."""
@@ -245,6 +256,7 @@ class MultiQuickPIVApp:
         self.btn_pause.config(state="normal")
         self.btn_continue.config(state="disabled")
         self.btn_abort.config(state="normal")
+        self.btn_apply_postprocess.config(state="disabled")
 
     def _set_batch_idle_state(self) -> None:
         """Restore normal actions after a batch stops or finishes."""
@@ -273,8 +285,11 @@ class MultiQuickPIVApp:
         self.btn_batch.config(state="disabled")
         self.btn_export.config(state="disabled")
         self.btn_export_video.config(state="disabled")
+        self.btn_apply_postprocess.config(state="disabled")
 
     def _set_loaded_state(self) -> None:
+        self.btn_apply_postprocess.config(state="disabled")
+        
         if self.analysis_mode == "3d":
             self.btn_single.config(state="disabled")
             self.btn_batch.config(state="normal")
@@ -325,6 +340,7 @@ class MultiQuickPIVApp:
 
         if self.analysis_mode == "3d":
             self._show_3d_summary(title="3D stack loaded")
+            return
 
         frame = self.loaded_stack.data[frame_index]
         draw_loaded_frame(
@@ -416,6 +432,66 @@ class MultiQuickPIVApp:
         )
         self.preview_canvas.draw()
 
+    def _show_loaded_3d_piv_result_summary(
+        self,
+        field_index: int = 0,
+        *,
+        title: str = "Loaded 3D PIV result",
+    ) -> None:
+        """Show a summary for loaded 3D PIV results instead of visualizing them."""
+        self.preview_ax.clear()
+        self.preview_ax.axis("off")
+        self.preview_ax.set_title(title)
+
+        if self.loaded_piv_result is None:
+            summary = "No loaded PIV result."
+        else:
+            result = self.loaded_piv_result
+            field_count = result.field_count
+            idx = max(0, min(field_index, field_count - 1))
+
+            median_state = (
+                "enabled" if bool(self.params_form.despike.get()) else "disabled"
+            )
+
+            summary_lines = [
+                "Loaded 3D PIV result",
+                "",
+                f"File: {result.source_path.name if result.source_path else '(unknown)'}",
+                f"Fields: {field_count}",
+                f"Current field index: {idx}",
+                f"U shape: {result.u.shape}",
+                f"V shape: {result.v.shape}",
+                f"W shape: {result.w.shape if result.w is not None else None}",
+                f"xgrid shape: {result.xg.shape}",
+                f"ygrid shape: {result.yg.shape}",
+                f"zgrid shape: {result.zg.shape if result.zg is not None else None}",
+                f"valid_interrogation: {result.valid_interrogation is not None}",
+                "",
+                "Visualization:",
+                "  - 3D vector-field preview is not supported inside the GUI.",
+                "  - Export VTK and open it in ParaView for 3D visualization.",
+                "",
+                "Post-processing:",
+                f"  - 3D median despike: currently {median_state}",
+                "  - SN filtering is not supported for 3D vector fields.",
+                "  - Apply post-processing, then export the updated result.",
+            ]
+
+            summary = "\n".join(summary_lines)
+
+        self.preview_ax.text(
+            0.03,
+            0.97,
+            summary,
+            transform=self.preview_ax.transAxes,
+            va="top",
+            ha="left",
+            fontsize=11,
+            family="monospace",
+        )
+        self.preview_canvas.draw()
+
     def _show_pair_result(self, result: PIVPairResult, *, title: str) -> None:
         ensure_preview_artists(
             self.preview_ax,
@@ -434,13 +510,18 @@ class MultiQuickPIVApp:
         """UI state for inspecting a saved PIV result without an image stack."""
         self.btn_single.config(state="disabled")
         self.btn_batch.config(state="disabled")
-        self.btn_export.config(state="disabled")
+        self.btn_apply_postprocess.config(state="normal")
+        self.btn_export.config(state="normal")
         self.btn_pause.config(state="disabled")
         self.btn_continue.config(state="disabled")
         self.btn_abort.config(state="disabled")
         self.btn_export_video.config(
             state="normal"
-            if self.loaded_piv_result is not None and self.loaded_piv_result.u.ndim == 3
+            if (
+                self.loaded_piv_result is not None
+                and self.loaded_piv_result.is_2d
+                and self.loaded_piv_result.u.ndim == 3
+            )
             else "disabled"
         )
 
@@ -448,15 +529,7 @@ class MultiQuickPIVApp:
         """Return the number of vector fields in the loaded saved result."""
         if self.loaded_piv_result is None:
             return 0
-
-        if self.loaded_piv_result.u.ndim == 2:
-            return 1
-        if self.loaded_piv_result.u.ndim == 3:
-            return int(self.loaded_piv_result.u.shape[0])
-
-        raise ValueError(
-            f"Unsupported saved U shape: {self.loaded_piv_result.u.shape}"
-        )
+        return self.loaded_piv_result.field_count
 
     def _show_loaded_piv_result(self, field_index: int) -> None:
         """Display a saved vector field without requiring an image stack."""
@@ -465,18 +538,22 @@ class MultiQuickPIVApp:
 
         result = self.loaded_piv_result
 
+        if result.is_3d:
+            self._show_loaded_3d_piv_result_summary(field_index)
+            return
+
         if result.u.ndim == 2:
             u = result.u
             v = result.v
-            title = f"Loaded PIV result: {result.source_path.name}"
+            title = f"Loaded 2D PIV result: {result.source_path.name}"
         elif result.u.ndim == 3:
             idx = max(0, min(field_index, result.u.shape[0] - 1))
             u = result.u[idx]
             v = result.v[idx]
-            title = f"Loaded PIV result: Field {idx}"
+            title = f"Loaded 2D PIV result: Field {idx}"
         else:
             raise ValueError(
-                f"Unsupported saved U shape: {result.u.shape}"
+                f"Unsupported saved 2D U shape: {result.u.shape}"
             )
 
         draw_vector_field_only(
@@ -549,12 +626,19 @@ class MultiQuickPIVApp:
             return None
 
         path = Path(save_path)
+        return self._strip_known_export_suffix(path)
 
-        # Treat any typed suffix as part of the stem selection workflow.
-        if path.suffix.lower() in {".npz", ".h5", ".vtk"}:
-            path = path.with_suffix("")
-
+    def _strip_known_export_suffix(self, path: Path) -> Path:
+        """Strip only known export suffixes without damaging internal dots."""
+        for suffix in (".npz", ".h5", ".vtk"):
+            if path.name.lower().endswith(suffix):
+                return path.with_name(path.name[: -len(suffix)])
         return path
+
+    def _with_export_suffix(self, base_path: Path, suffix: str) -> Path:
+        """Append an export suffix without removing text after internal dots."""
+        base = self._strip_known_export_suffix(base_path)
+        return base.with_name(base.name + suffix)
 
     def _export_batch_result_direct(
         self,
@@ -571,16 +655,28 @@ class MultiQuickPIVApp:
         written_names: list[str] = []
 
         if export_npz:
-            npz_path = save_batch_result(out_path.with_suffix(".npz"), result)
+            npz_path = save_batch_result(self._with_export_suffix(out_path, ".npz"), result)
             written_names.append(npz_path.path.name)
 
         if export_h5:
-            h5_path = save_batch_result(out_path.with_suffix(".h5"), result)
+            h5_path = save_batch_result(self._with_export_suffix(out_path, ".h5"), result)
             written_names.append(h5_path.path.name)
 
         if export_vtk:
-            vtk_paths = save_batch_vector_fields_to_vtk(out_path, result)
-            written_names.append(f"{len(vtk_paths)} VTK file(s)")
+            vtk_out_path = self._with_export_suffix(out_path, ".vtk")
+
+            if self.analysis_mode == "3d":
+                vtk_paths = save_batch_vector_fields_to_vtk(vtk_out_path, result)
+            else:
+                vtk_paths = save_batch_2d_vector_fields_to_vtk(vtk_out_path, result)
+
+            if len(vtk_paths) == 1:
+                written_names.append(vtk_paths[0].path.name)
+            else:
+                written_names.append(
+                    f"{len(vtk_paths)} VTK files "
+                    f"({vtk_paths[0].path.name} ... {vtk_paths[-1].path.name})"
+                )
 
         if self.analysis_mode == "3d":
             self._last_3d_export_summary = ", ".join(written_names)
@@ -753,10 +849,21 @@ class MultiQuickPIVApp:
         try:
             loaded = load_saved_piv_result(path)
             
-            self.analysis_mode = "2d"
-            self._apply_2d_parameter_defaults()
-            set_sn_controls_enabled(self.params_form, enabled=True)
-            set_parameter_mode_note(self.params_form, spatial_ndim=2)
+            self.analysis_mode = "3d" if loaded.is_3d else "2d"
+
+            if loaded.is_3d:
+                self._apply_3d_parameter_defaults()
+                self.params_form.compute_sn.set(False)
+                self.params_form.sn_filter.set(False)
+                set_sn_controls_enabled(self.params_form, enabled=False)
+                set_parameter_mode_note(self.params_form, spatial_ndim=3)
+            else:
+                self._apply_2d_parameter_defaults()
+                if loaded.sn is None:
+                    self.params_form.compute_sn.set(False)
+                    self.params_form.sn_filter.set(False)
+                set_sn_controls_enabled(self.params_form, enabled=loaded.sn is not None)
+                set_parameter_mode_note(self.params_form, spatial_ndim=2)
             self.loaded_stack = None
             self.loaded_piv_result = loaded
             self.current_result = None
@@ -766,8 +873,8 @@ class MultiQuickPIVApp:
 
             self.var_file_name.set(f"PIV result: {loaded.source_path.name}")
             self.var_result.set(
-                f"Loaded PIV result: {loaded.source_path.name} – "
-                f"U shape: {loaded.u.shape}"
+                f"Loaded {'3D' if loaded.is_3d else '2D'} PIV result: "
+                f"{loaded.source_path.name} – U shape: {loaded.u.shape}"
             )
             self._set_status("PIV result loaded", 3000)
 
@@ -777,7 +884,7 @@ class MultiQuickPIVApp:
             self._show_loaded_piv_result(0)
             self._set_result_view_state()
             self.btn_export_video.config(
-                state="normal" if loaded.u.ndim == 3 else "disabled"
+                state="normal" if loaded.is_2d and loaded.u.ndim == 3 else "disabled"
             )
             self.progress["value"] = 0
 
@@ -959,11 +1066,7 @@ class MultiQuickPIVApp:
                         export_path,
                         export_npz=(options is not None and options.export_npz),
                         export_h5=(options is not None and options.export_h5),
-                        export_vtk=(
-                            self.analysis_mode == "3d"
-                            and options is not None
-                            and options.export_vtk
-                        ),
+                        export_vtk=(options is not None and options.export_vtk),
                         batch_elapsed_seconds=batch_elapsed,
                         last_pair_elapsed_seconds=self._last_pair_elapsed_seconds,
                     )
@@ -1108,8 +1211,152 @@ class MultiQuickPIVApp:
         self._set_status("Batch resuming...")
         self.root.after(1, self._run_next_batch_step)
 
+    def _postprocess_loaded_piv_result(
+        self,
+        result: LoadedPIVResult,
+    ) -> LoadedPIVResult:
+        """Apply configured post-processing to a loaded 2D or 3D PIV result."""
+        params = build_workflow_params(
+            self.params_form,
+            spatial_ndim=result.spatial_ndim,
+        )
+
+        if result.is_3d:
+            params.run.compute_sn = False
+            params.postprocess.sn_filter.enabled = False
+
+        if result.is_2d:
+            if result.u.ndim == 2:
+                processed = apply_postprocessing(
+                    result.u,
+                    result.v,
+                    params=params,
+                    sn=result.sn,
+                )
+                return LoadedPIVResult(
+                    u=processed.u,
+                    v=processed.v,
+                    xg=result.xg,
+                    yg=result.yg,
+                    sn=processed.sn,
+                    source_path=result.source_path,
+                    valid_interrogation=result.valid_interrogation,
+                )
+
+            u_fields = []
+            v_fields = []
+            sn_fields = [] if result.sn is not None else None
+
+            for index in range(result.u.shape[0]):
+                sn_i = result.sn[index] if result.sn is not None else None
+
+                processed = apply_postprocessing(
+                    result.u[index],
+                    result.v[index],
+                    params=params,
+                    sn=sn_i,
+                )
+
+                u_fields.append(processed.u)
+                v_fields.append(processed.v)
+
+                if sn_fields is not None and processed.sn is not None:
+                    sn_fields.append(processed.sn)
+
+            return LoadedPIVResult(
+                u=np.stack(u_fields),
+                v=np.stack(v_fields),
+                xg=result.xg,
+                yg=result.yg,
+                sn=np.stack(sn_fields) if sn_fields is not None else None,
+                source_path=result.source_path,
+                valid_interrogation=result.valid_interrogation,
+            )
+
+        if result.w is None:
+            raise ValueError("Loaded 3D PIV result is missing W components.")
+
+        if result.u.ndim == 3:
+            processed = apply_postprocessing(
+                result.u,
+                result.v,
+                w=result.w,
+                params=params,
+            )
+            return LoadedPIVResult(
+                u=processed.u,
+                v=processed.v,
+                w=processed.w,
+                xg=result.xg,
+                yg=result.yg,
+                zg=result.zg,
+                sn=None,
+                source_path=result.source_path,
+                valid_interrogation=result.valid_interrogation,
+            )
+
+        u_fields = []
+        v_fields = []
+        w_fields = []
+
+        for index in range(result.u.shape[0]):
+            processed = apply_postprocessing(
+                result.u[index],
+                result.v[index],
+                w=result.w[index],
+                params=params,
+            )
+
+            u_fields.append(processed.u)
+            v_fields.append(processed.v)
+
+            if processed.w is None:
+                raise ValueError("3D post-processing unexpectedly returned no W field.")
+            w_fields.append(processed.w)
+
+        return LoadedPIVResult(
+            u=np.stack(u_fields),
+            v=np.stack(v_fields),
+            w=np.stack(w_fields),
+            xg=result.xg,
+            yg=result.yg,
+            zg=result.zg,
+            sn=None,
+            source_path=result.source_path,
+            valid_interrogation=result.valid_interrogation,
+        )
+
+    def on_apply_postprocessing(self) -> None:
+        """Apply the current post-processing settings to a loaded PIV result."""
+        if self.loaded_piv_result is None:
+            messagebox.showerror(
+                "Post-processing error",
+                "Load a saved PIV result before applying post-processing.",
+            )
+            return
+
+        try:
+            self.loaded_piv_result = self._postprocess_loaded_piv_result(
+                self.loaded_piv_result
+            )
+
+            field_index = int(self.var_frame.get())
+            self._show_loaded_piv_result(field_index)
+
+            self.btn_export.config(state="normal")
+            self._set_status("Post-processing applied", 3000)
+            self.var_result.set(
+                f"Post-processing applied to loaded "
+                f"{'3D' if self.loaded_piv_result.is_3d else '2D'} PIV result."
+            )
+
+        except Exception as exc:
+            messagebox.showerror("Post-processing error", str(exc))
+            self.var_result.set(f"Post-processing failed: {exc}")
+            self._set_status("Post-processing failed")
+
     def on_export_current(self) -> None:
-        if self.current_result is None:
+        if self.current_result is None and self.loaded_piv_result is None:
             messagebox.showerror("Export error", "No result available for export.")
             return
 
@@ -1120,19 +1367,65 @@ class MultiQuickPIVApp:
             filetypes=[
                 ("NumPy zipped", "*.npz"),
                 ("HDF5", "*.h5"),
+                ("VTK", "*.vtk"),
             ],
         )
         if not out_path:
             return
 
         try:
-            if isinstance(self.current_result, PIVPairResult):
-                export_path = save_pair_result(out_path, self.current_result)
+            out_path_obj = Path(out_path)
+            suffix = out_path_obj.suffix.lower()
+
+            if self.loaded_piv_result is not None:
+                export_result = save_loaded_piv_result(
+                    out_path_obj,
+                    self.loaded_piv_result,
+                )
+
+                if isinstance(export_result, list):
+                    saved_text = f"{len(export_result)} VTK file(s)"
+                else:
+                    saved_text = export_result.path.name
+
+            elif isinstance(self.current_result, PIVPairResult):
+                if suffix == ".vtk":
+                    batch_wrapper = BatchPIVResult(pair_results=[self.current_result])
+                    if self.current_result.w is None:
+                        vtk_paths = save_batch_2d_vector_fields_to_vtk(
+                            out_path_obj,
+                            batch_wrapper,
+                        )
+                    else:
+                        vtk_paths = save_batch_vector_fields_to_vtk(
+                            out_path_obj,
+                            batch_wrapper,
+                        )
+                    saved_text = f"{len(vtk_paths)} VTK file(s)"
+                else:
+                    export_path = save_pair_result(out_path_obj, self.current_result)
+                    saved_text = export_path.path.name
+
             else:
-                export_path = save_batch_result(out_path, self.current_result)
+                if suffix == ".vtk":
+                    if self.analysis_mode == "3d":
+                        vtk_paths = save_batch_vector_fields_to_vtk(
+                            out_path_obj,
+                            self.current_result,
+                        )
+                    else:
+                        vtk_paths = save_batch_2d_vector_fields_to_vtk(
+                            out_path_obj,
+                            self.current_result,
+                        )
+                    saved_text = f"{len(vtk_paths)} VTK file(s)"
+                else:
+                    export_path = save_batch_result(out_path_obj, self.current_result)
+                    saved_text = export_path.path.name
 
             self._set_status("Export complete", 3000)
-            self.var_result.set(f"Saved: {export_path.path.name}")
+            self.var_result.set(f"Saved: {saved_text}")
+
         except Exception as exc:
             messagebox.showerror("Export error", str(exc))
             self.var_result.set(f"Export failed: {exc}")
@@ -1154,7 +1447,11 @@ class MultiQuickPIVApp:
             xg = self.current_result.xg
             yg = self.current_result.yg
 
-        elif self.loaded_piv_result is not None and self.loaded_piv_result.u.ndim == 3:
+        elif (
+            self.loaded_piv_result is not None
+            and self.loaded_piv_result.is_2d
+            and self.loaded_piv_result.u.ndim == 3
+        ):
             u = self.loaded_piv_result.u
             v = self.loaded_piv_result.v
             xg = self.loaded_piv_result.xg
@@ -1213,10 +1510,15 @@ class MultiQuickPIVApp:
         frame2_idx: int | None = None,
     ) -> str:
         """Build the default export filename (without extension)."""
-        if self.loaded_stack is None:
-            stem = "piv_result"
-        else:
+        if self.loaded_stack is not None:
             stem = self.loaded_stack.source_path.stem
+        elif (
+            self.loaded_piv_result is not None
+            and self.loaded_piv_result.source_path is not None
+        ):
+            stem = self.loaded_piv_result.source_path.stem
+        else:
+            stem = "piv_result"
 
         if mode == "single" and frame1_idx is not None and frame2_idx is not None:
             return f"{stem}_piv_{frame1_idx:04d}_to_{frame2_idx:04d}"
