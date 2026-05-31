@@ -51,7 +51,7 @@ The results can be exported as:
 
 - NumPy archive (`.npz`) for storing vector components and grid coordinates
 - HDF5 file (`.h5`) for storing vector components and grid coordinates
-- VTK files (`.vtk`) for visualizing 3D vector fields in ParaView
+- VTK files (`.vtk`) for visualizing 2D or 3D vector fields in ParaView
 - optional video or GIF for 2D batch vector-field evolution
 
 ## Requirements
@@ -138,7 +138,7 @@ A typical 2D workflow is:
 4. Adjust the PIV parameters if needed.
 5. Run a single PIV calculation first to check the result.
 6. If the result looks reasonable, run batch PIV.
-7. Export the computed vector fields as NPZ/HDF5.
+7. Export the computed vector fields as NPZ/HDF5, or as VTK files for ParaView visualization.
 8. Optionally export a video or GIF of the 2D vector fields.
 
 ### 3D PIV workflow
@@ -156,6 +156,7 @@ A typical 3D workflow is:
   object_t000.tif
   object_t001.tif
   object_t002.tif
+  ```
 
   Avoid non-padded names such as object_t1.tif, object_t2.tif, and object_t10.tif, because filename sorting can place t10 before t2.
 
@@ -167,6 +168,35 @@ A typical 3D workflow is:
    - VTK (`.vtk`) for ParaView visualization
 7. Export the 3D vector fields.
 8. Open the exported VTK file(s) manually in ParaView to visualize the 3D vector field.
+
+## Loading saved PIV results
+
+Saved PIV result files can be loaded back into the GUI using **Load PIV result**.
+
+Supported saved result formats are:
+
+- HDF5 (`.h5`)
+- NumPy zipped (`.npz`)
+
+For saved 2D PIV results, the GUI displays the vector fields directly. If the result contains multiple frame-pair fields, the frame slider can be used to inspect each vector field.
+
+For saved 3D PIV results, the GUI shows a summary panel instead of rendering the 3D vector field internally. The summary includes the number of fields, vector-component shapes, grid shapes, and whether a `valid_interrogation` mask is present. To visualize 3D vector fields, export the loaded result as VTK and open it in ParaView.
+
+Loaded PIV results can be post-processed using the current post-processing settings and then exported again as `.h5`, `.npz`, or `.vtk`.
+
+For 3D loaded results, median despiking is available, but signal-to-noise filtering remains disabled.
+
+## Visualizing 2D PIV results in ParaView
+
+For 2D batch PIV results, VTK export writes one `.vtk` file per processed frame pair. The files are written as an indexed sequence, for example:
+
+```text
+sample_000.vtk
+sample_001.vtk
+sample_002.vtk
+```
+
+The 2D VTK files contain a flat vector field with Z = 0. In ParaView, apply Glyph, set Orientation Array to directions, and set Scale Array to direction_mag.
 
 ## Visualizing 3D PIV results in ParaView
 
@@ -240,6 +270,7 @@ Default settings depend on the selected workflow:
 3D PIV defaults:
   Downsampling = 3×
   Background filter = High
+```
 
 For 3D data, High is the recommended starting point for the Background filter.
 
@@ -271,7 +302,7 @@ For a full batch run:
 python scripts/smoke_test_pipeline.py test_data/example_stack.h5 --mode batch --out test_outputs/example_batch_result.npz
 ```
 
-The output format is selected by the file extension passed to `--out`. Use `.npz` for a NumPy archive or `.h5` for HDF5 output. VTK export is available through the GUI 3D batch export workflow.
+The output format is selected by the file extension passed to `--out`. Use `.npz` for a NumPy archive or `.h5` for HDF5 output. VTK export is available through the GUI batch export workflow for both 2D and 3D results.
 
 Additional smoke tests are available for the 3D workflow:
 
@@ -378,7 +409,7 @@ Current 3D design choices and limitations:
 
 - 3D image volumes are not previewed inside the GUI
 - 3D vector fields are visualized in ParaView, not inside the GUI
-- saved 3D result viewing is not provided inside the GUI
+- saved 3D results show a summary panel inside the GUI, but 3D vector-field visualization is done in ParaView
 - 3D video/GIF export is not provided
 - 3D signal-to-noise computation and SN filtering are disabled until the backend issue is resolved
 
