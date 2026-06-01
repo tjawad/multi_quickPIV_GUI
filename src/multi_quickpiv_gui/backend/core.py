@@ -9,7 +9,9 @@ from __future__ import annotations
 from multi_quickpiv_gui.postprocessing.pipeline import (
     PostProcessResult,
     apply_postprocessing,
+    apply_spatiotemporal_average,
 )
+
 from multi_quickpiv_gui.postprocessing.spatial import (
     median_despike,
     median_despike_vector_field,
@@ -19,6 +21,7 @@ from multi_quickpiv_gui.postprocessing.spatial import (
 __all__ = [
     "PostProcessResult",
     "apply_postprocessing",
+    "apply_spatiotemporal_average",
     "median_despike",
     "median_despike_vector_field",
     "sn_threshold_filter",

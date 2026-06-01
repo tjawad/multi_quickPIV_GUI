@@ -42,7 +42,10 @@ from multi_quickpiv_gui.gui.dialogs import (
     ThreeDLoadInfoDialog,
 )
 from multi_quickpiv_gui.runtime.batch import BatchRuntimeState
-from multi_quickpiv_gui.backend.core import apply_postprocessing
+from multi_quickpiv_gui.backend.core import (
+    apply_postprocessing,
+    apply_spatiotemporal_average,
+)
 
 from multi_quickpiv_gui.gui.params_form import (
     ParamsFormState,
@@ -51,6 +54,7 @@ from multi_quickpiv_gui.gui.params_form import (
     create_params_form_state,
     set_parameter_mode_note,
     set_sn_controls_enabled,
+    set_spatiotemporal_controls_for_mode,
 )
 
 from multi_quickpiv_gui.workflow.pipeline import (
@@ -88,6 +92,9 @@ class MultiQuickPIVApp:
         self._last_pair_elapsed_seconds: float | None = None
         self._last_3d_batch_elapsed_seconds: float | None = None
         self._last_3d_export_summary: str | None = None
+        self._last_3d_pair_label: str | None = None
+        self._3d_timing_color_index: int = 0
+        self._3d_timing_colors: tuple[str, str] = ("tab:blue", "tab:green")
 
         self._build_variables()
         self._build_layout()
@@ -270,6 +277,11 @@ class MultiQuickPIVApp:
             self.btn_export.config(
                 state="normal" if self.current_result is not None else "disabled"
             )
+            self.btn_apply_postprocess.config(
+                state="normal"
+                if isinstance(self.current_result, BatchPIVResult)
+                else "disabled"
+            )
         self.btn_export_video.config(
             state="normal"
             if self.analysis_mode == "2d"
@@ -333,6 +345,7 @@ class MultiQuickPIVApp:
 
         self.params_form.background_filter.set("High")
         self.params_form.downsample_factor.set("3×")
+        self.params_form.average_temporal_radius.set("0")
 
     def _show_loaded_frame(self, frame_index: int) -> None:
         if self.loaded_stack is None:
@@ -356,6 +369,10 @@ class MultiQuickPIVApp:
         self.preview_ax.clear()
         self.preview_ax.axis("off")
         self.preview_ax.set_title(title)
+
+        timing_line: str | None = None
+        timing_color: str | None = None
+        timing_line_index: int | None = None
 
         if self.loaded_stack is None:
             summary = "No 3D stack loaded."
@@ -392,9 +409,16 @@ class MultiQuickPIVApp:
                 summary_lines.extend(["", "Last 3D run:"])
 
                 if self._last_pair_elapsed_seconds is not None:
-                    summary_lines.append(
-                        f"  - last pair time: {self._last_pair_elapsed_seconds:.1f} s"
+                    pair_label = self._last_3d_pair_label or "last pair"
+                    timing_line = (
+                        f"  - {pair_label}: {self._last_pair_elapsed_seconds:.1f} s"
                     )
+                    timing_color = self._3d_timing_colors[
+                        self._3d_timing_color_index % len(self._3d_timing_colors)
+                    ]
+
+                    timing_line_index = len(summary_lines)
+                    summary_lines.append("")
 
                 if self._last_3d_batch_elapsed_seconds is not None:
                     summary_lines.append(
@@ -430,6 +454,21 @@ class MultiQuickPIVApp:
             fontsize=11,
             family="monospace",
         )
+        if timing_line is not None and timing_line_index is not None:
+            y_pos = 0.97 - (timing_line_index * 0.035)
+
+            self.preview_ax.text(
+                0.03,
+                y_pos,
+                timing_line,
+                transform=self.preview_ax.transAxes,
+                va="top",
+                ha="left",
+                fontsize=11,
+                family="monospace",
+                color=timing_color or "tab:blue",
+            )
+
         self.preview_canvas.draw()
 
     def _show_loaded_3d_piv_result_summary(
@@ -721,6 +760,10 @@ class MultiQuickPIVApp:
             self._apply_2d_parameter_defaults()
             set_sn_controls_enabled(self.params_form, enabled=True)
             set_parameter_mode_note(self.params_form, spatial_ndim=2)
+            set_spatiotemporal_controls_for_mode(
+                self.params_form,
+                spatial_ndim=2,
+            )
             self.loaded_stack = loaded
             self.loaded_piv_result = None
             self.current_result = None
@@ -805,6 +848,8 @@ class MultiQuickPIVApp:
             self._last_pair_elapsed_seconds = None
             self._last_3d_batch_elapsed_seconds = None
             self._last_3d_export_summary = None
+            self._last_3d_pair_label = None
+            self._3d_timing_color_index = 0
 
             # 3D computeSN and SN filtering are currently unavailable because
             # multi_quickPIV.compute_SN fails for 3D inputs. Median despike remains usable.
@@ -812,7 +857,10 @@ class MultiQuickPIVApp:
             self.params_form.sn_filter.set(False)
             set_sn_controls_enabled(self.params_form, enabled=False)
             set_parameter_mode_note(self.params_form, spatial_ndim=3)
-
+            set_spatiotemporal_controls_for_mode(
+                self.params_form,
+                spatial_ndim=3,
+            )
             reset_preview_state(self.preview_state)
 
             self.var_file_name.set(f"3D PIV file: {loaded.source_path.name}")
@@ -857,6 +905,10 @@ class MultiQuickPIVApp:
                 self.params_form.sn_filter.set(False)
                 set_sn_controls_enabled(self.params_form, enabled=False)
                 set_parameter_mode_note(self.params_form, spatial_ndim=3)
+                set_spatiotemporal_controls_for_mode(
+                    self.params_form,
+                    spatial_ndim=3,
+                )
             else:
                 self._apply_2d_parameter_defaults()
                 if loaded.sn is None:
@@ -864,6 +916,10 @@ class MultiQuickPIVApp:
                     self.params_form.sn_filter.set(False)
                 set_sn_controls_enabled(self.params_form, enabled=loaded.sn is not None)
                 set_parameter_mode_note(self.params_form, spatial_ndim=2)
+                set_spatiotemporal_controls_for_mode(
+                    self.params_form,
+                    spatial_ndim=2,
+                )
             self.loaded_stack = None
             self.loaded_piv_result = loaded
             self.current_result = None
@@ -1015,6 +1071,7 @@ class MultiQuickPIVApp:
             self.batch.reset()
             self._batch_started_at = None
             self._last_pair_elapsed_seconds = None
+            self._last_3d_pair_label = None
             self.current_result = None
             self.current_single_pair_indices = None
             self._set_batch_idle_state()
@@ -1036,6 +1093,13 @@ class MultiQuickPIVApp:
 
         if self.batch.is_finished():
             result = self.batch.build_batch_result()
+
+            if self.batch.params is not None:
+                result = self._apply_spatiotemporal_average_to_batch_result(
+                    result,
+                    params=self.batch.params,
+                )
+
             export_path = self.batch.export_path
             options = self.batch.options
 
@@ -1138,6 +1202,12 @@ class MultiQuickPIVApp:
             pair_elapsed = time.perf_counter() - pair_start
             self._last_pair_elapsed_seconds = pair_elapsed
 
+            if self.analysis_mode == "3d":
+                self._last_3d_pair_label = (
+                    f"pair {self.batch.next_pair_index + 1}/{self.batch.total_pairs}"
+                )
+                self._3d_timing_color_index += 1
+
             self.batch.append_result(pair_result)
             self.progress["value"] = self.batch.next_pair_index
 
@@ -1152,6 +1222,8 @@ class MultiQuickPIVApp:
                 )
 
             if self.analysis_mode == "3d":
+                self._show_3d_summary(title="3D PIV running")
+
                 self.var_result.set(
                     f"Processed 3D pair {self.batch.next_pair_index}/"
                     f"{self.batch.total_pairs} in {pair_elapsed:.1f} s"
@@ -1211,6 +1283,114 @@ class MultiQuickPIVApp:
         self._set_status("Batch resuming...")
         self.root.after(1, self._run_next_batch_step)
 
+    def _ensure_no_spatiotemporal_average_for_single_field(
+        self,
+        *,
+        params,
+    ) -> None:
+        """Reject spatio-temporal averaging for single vector fields."""
+        if params.postprocess.spatiotemporal_average.enabled:
+            raise ValueError(
+                "Spatio-temporal averaging is only supported for batch or loaded "
+                "multi-field PIV results."
+            )
+    
+    def _apply_spatiotemporal_average_to_batch_result(
+        self,
+        result: BatchPIVResult,
+        *,
+        params,
+    ) -> BatchPIVResult:
+        """Apply spatio-temporal averaging to a computed batch result."""
+        average = params.postprocess.spatiotemporal_average
+        if not average.enabled:
+            return result
+
+        if not result.pair_results:
+            return result
+
+        u_stack = np.stack(result.u_list)
+        v_stack = np.stack(result.v_list)
+
+        w_list = result.w_list
+        w_stack = None if w_list is None else np.stack(w_list)
+
+        u_stack, v_stack, w_stack = apply_spatiotemporal_average(
+            u_stack,
+            v_stack,
+            w=w_stack,
+            params=params,
+        )
+
+        averaged_pairs: list[PIVPairResult] = []
+
+        for index, pair in enumerate(result.pair_results):
+            averaged_pairs.append(
+                PIVPairResult(
+                    img1=pair.img1,
+                    img2=pair.img2,
+                    u=u_stack[index],
+                    v=v_stack[index],
+                    xg=pair.xg,
+                    yg=pair.yg,
+                    sn=pair.sn,
+                    sn_replaced=pair.sn_replaced,
+                    w=None if w_stack is None else w_stack[index],
+                    zg=pair.zg,
+                    valid_interrogation=pair.valid_interrogation,
+                )
+            )
+
+        return BatchPIVResult(pair_results=averaged_pairs)
+
+    def _postprocess_current_batch_result(
+        self,
+        result: BatchPIVResult,
+    ) -> BatchPIVResult:
+        """Apply current post-processing settings to a computed batch result."""
+        params = build_workflow_params(
+            self.params_form,
+            spatial_ndim=self._current_spatial_ndim(),
+        )
+
+        if self.analysis_mode == "3d":
+            params.run.compute_sn = False
+            params.postprocess.sn_filter.enabled = False
+
+        processed_pairs: list[PIVPairResult] = []
+
+        for pair in result.pair_results:
+            processed = apply_postprocessing(
+                pair.u,
+                pair.v,
+                w=pair.w,
+                params=params,
+                sn=pair.sn,
+            )
+
+            processed_pairs.append(
+                PIVPairResult(
+                    img1=pair.img1,
+                    img2=pair.img2,
+                    u=processed.u,
+                    v=processed.v,
+                    xg=pair.xg,
+                    yg=pair.yg,
+                    sn=processed.sn,
+                    sn_replaced=processed.sn_replaced,
+                    w=processed.w,
+                    zg=pair.zg,
+                    valid_interrogation=pair.valid_interrogation,
+                )
+            )
+
+        processed_batch = BatchPIVResult(pair_results=processed_pairs)
+
+        return self._apply_spatiotemporal_average_to_batch_result(
+            processed_batch,
+            params=params,
+        )
+        
     def _postprocess_loaded_piv_result(
         self,
         result: LoadedPIVResult,
@@ -1227,6 +1407,10 @@ class MultiQuickPIVApp:
 
         if result.is_2d:
             if result.u.ndim == 2:
+                self._ensure_no_spatiotemporal_average_for_single_field(
+                    params=params,
+                )
+
                 processed = apply_postprocessing(
                     result.u,
                     result.v,
@@ -1263,9 +1447,18 @@ class MultiQuickPIVApp:
                 if sn_fields is not None and processed.sn is not None:
                     sn_fields.append(processed.sn)
 
+            u_stack = np.stack(u_fields)
+            v_stack = np.stack(v_fields)
+
+            u_stack, v_stack, _ = apply_spatiotemporal_average(
+                u_stack,
+                v_stack,
+                params=params,
+            )
+
             return LoadedPIVResult(
-                u=np.stack(u_fields),
-                v=np.stack(v_fields),
+                u=u_stack,
+                v=v_stack,
                 xg=result.xg,
                 yg=result.yg,
                 sn=np.stack(sn_fields) if sn_fields is not None else None,
@@ -1277,6 +1470,10 @@ class MultiQuickPIVApp:
             raise ValueError("Loaded 3D PIV result is missing W components.")
 
         if result.u.ndim == 3:
+            self._ensure_no_spatiotemporal_average_for_single_field(
+                params=params,
+            )
+
             processed = apply_postprocessing(
                 result.u,
                 result.v,
@@ -1314,10 +1511,21 @@ class MultiQuickPIVApp:
                 raise ValueError("3D post-processing unexpectedly returned no W field.")
             w_fields.append(processed.w)
 
+        u_stack = np.stack(u_fields)
+        v_stack = np.stack(v_fields)
+        w_stack = np.stack(w_fields)
+
+        u_stack, v_stack, w_stack = apply_spatiotemporal_average(
+            u_stack,
+            v_stack,
+            w=w_stack,
+            params=params,
+        )
+
         return LoadedPIVResult(
-            u=np.stack(u_fields),
-            v=np.stack(v_fields),
-            w=np.stack(w_fields),
+            u=u_stack,
+            v=v_stack,
+            w=w_stack,
             xg=result.xg,
             yg=result.yg,
             zg=result.zg,
@@ -1327,28 +1535,89 @@ class MultiQuickPIVApp:
         )
 
     def on_apply_postprocessing(self) -> None:
-        """Apply the current post-processing settings to a loaded PIV result."""
-        if self.loaded_piv_result is None:
+        """Apply the current post-processing settings to a loaded or current result."""
+        if self.loaded_piv_result is None and self.current_result is None:
             messagebox.showerror(
                 "Post-processing error",
-                "Load a saved PIV result before applying post-processing.",
+                "Load or compute a PIV result before applying post-processing.",
             )
             return
 
         try:
-            self.loaded_piv_result = self._postprocess_loaded_piv_result(
-                self.loaded_piv_result
-            )
+            if self.loaded_piv_result is not None:
+                self.loaded_piv_result = self._postprocess_loaded_piv_result(
+                    self.loaded_piv_result
+                )
 
-            field_index = int(self.var_frame.get())
-            self._show_loaded_piv_result(field_index)
+                field_index = int(self.var_frame.get())
+                self._show_loaded_piv_result(field_index)
 
-            self.btn_export.config(state="normal")
-            self._set_status("Post-processing applied", 3000)
-            self.var_result.set(
-                f"Post-processing applied to loaded "
-                f"{'3D' if self.loaded_piv_result.is_3d else '2D'} PIV result."
-            )
+                self.btn_export.config(state="normal")
+                self._set_status("Post-processing applied", 3000)
+                self.var_result.set(
+                    f"Post-processing applied to loaded "
+                    f"{'3D' if self.loaded_piv_result.is_3d else '2D'} PIV result."
+                )
+                return
+
+            if isinstance(self.current_result, PIVPairResult):
+                params = build_workflow_params(
+                    self.params_form,
+                    spatial_ndim=self._current_spatial_ndim(),
+                )
+
+                self._ensure_no_spatiotemporal_average_for_single_field(
+                    params=params,
+                )
+
+                processed = apply_postprocessing(
+                    self.current_result.u,
+                    self.current_result.v,
+                    w=self.current_result.w,
+                    params=params,
+                    sn=self.current_result.sn,
+                )
+
+                self.current_result = PIVPairResult(
+                    img1=self.current_result.img1,
+                    img2=self.current_result.img2,
+                    u=processed.u,
+                    v=processed.v,
+                    xg=self.current_result.xg,
+                    yg=self.current_result.yg,
+                    sn=processed.sn,
+                    sn_replaced=processed.sn_replaced,
+                    w=processed.w,
+                    zg=self.current_result.zg,
+                    valid_interrogation=self.current_result.valid_interrogation,
+                )
+
+                self._show_result_for_frame_index(int(self.var_frame.get()))
+                self.btn_export.config(state="normal")
+                self._set_status("Post-processing applied", 3000)
+                self.var_result.set("Post-processing applied to current single PIV result.")
+                return
+
+            if isinstance(self.current_result, BatchPIVResult):
+                self.current_result = self._postprocess_current_batch_result(
+                    self.current_result
+                )
+
+                frame_index = int(self.var_frame.get())
+                self._show_result_for_frame_index(frame_index)
+
+                self.btn_export.config(state="normal")
+                self.btn_export_video.config(
+                    state="normal" if self.analysis_mode == "2d" else "disabled"
+                )
+                self._set_status("Post-processing applied", 3000)
+                self.var_result.set(
+                    f"Post-processing applied to current "
+                    f"{'3D' if self.analysis_mode == '3d' else '2D'} batch result."
+                )
+                return
+
+            raise ValueError("Unsupported result type for post-processing.")
 
         except Exception as exc:
             messagebox.showerror("Post-processing error", str(exc))

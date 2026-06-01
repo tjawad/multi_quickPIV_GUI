@@ -11,6 +11,7 @@ from multi_quickpiv_gui.workflow.params import (
     PIVRunParams,
     PostProcessParams,
     SNFilterParams,
+    SpatioTemporalAverageParams,
     WorkflowParams,
 )
 
@@ -41,9 +42,13 @@ class ParamsFormState:
 
     sn_filter: tk.BooleanVar
     sn_min: tk.StringVar
+    average_enabled: tk.BooleanVar
+    average_spatial_radius: tk.StringVar
+    average_temporal_radius: tk.StringVar
     
     compute_sn_widget: ttk.Checkbutton | None = field(default=None, init=False)
     sn_filter_widget: ttk.Checkbutton | None = field(default=None, init=False)
+    average_temporal_widget: ttk.Entry | None = field(default=None, init=False)
 
 def _auto_fill_following_fields(
     primary: tk.StringVar,
@@ -88,6 +93,9 @@ def create_params_form_state(master: tk.Misc) -> ParamsFormState:
         despike_thr=tk.StringVar(master=master, value="3.5"),
         sn_filter=tk.BooleanVar(master=master, value=False),
         sn_min=tk.StringVar(master=master, value="1.0"),
+                average_enabled=tk.BooleanVar(master=master, value=False),
+        average_spatial_radius=tk.StringVar(master=master, value="1"),
+        average_temporal_radius=tk.StringVar(master=master, value="0"),
     )
 
     _auto_fill_following_fields(
@@ -112,6 +120,42 @@ def _show_background_filter_info() -> None:
         "Skips low-signal interrogation regions before PIV; High is recommended for 3D data.",
     )
 
+CORR_ALG_HELP = {
+    "nsqecc": (
+        "NSQECC: normalized squared error cross-correlation; the recommended "
+        "default for robust matching in biological image data."
+    ),
+    "zncc": (
+        "ZNCC: zero-normalized cross-correlation; useful for reducing the dot-product "
+        "bias toward high-intensity regions."
+    ),
+    "fft": (
+        "FFT: frequency-domain cross-correlation; computes cross-correlation "
+        "efficiently in the frequency domain - fast."
+    ),
+}
+
+def _show_corr_alg_info(form: ParamsFormState) -> None:
+    """Show information about the available cross-correlation algorithms."""
+    selected = str(form.corr_alg.get()).strip().lower()
+
+    lines = []
+    for name in ("nsqecc", "zncc", "fft"):
+        prefix = "▶ " if name == selected else "  "
+        lines.append(f"{prefix}{CORR_ALG_HELP[name]}")
+
+    messagebox.showinfo(
+        "Cross-correlation algorithms",
+        "\n\n".join(lines),
+    )
+
+def _show_spatiotemporal_average_info() -> None:
+    """Show a short explanation of the spatio-temporal averaging control."""
+    messagebox.showinfo(
+        "Spatio-temporal averaging",
+        "Smooths batch or loaded multi-field vector-field sequences. \n\n"
+        "For 3D PIV, temporal averaging is not supported yet, so temporal radius is fixed to 0.",
+    )
 
 def build_params_panel(parent: ttk.Frame, form: ParamsFormState) -> None:
     """Build the full parameter panel into the given parent frame."""
@@ -196,7 +240,7 @@ def build_params_panel(parent: ttk.Frame, form: ParamsFormState) -> None:
         variable=form.compute_sn,
     )
     form.compute_sn_widget.grid(row=7, column=0, sticky="w", pady=(8, 0))
-
+    
     ttk.Label(piv_frame, text="corr_alg").grid(row=8, column=0, sticky="w")
     corr_alg_combo = ttk.Combobox(
         piv_frame,
@@ -205,7 +249,15 @@ def build_params_panel(parent: ttk.Frame, form: ParamsFormState) -> None:
         width=12,
         state="normal",
     )
-    corr_alg_combo.grid(row=8, column=1, columnspan=3, sticky="ew", pady=4)
+    corr_alg_combo.grid(row=8, column=1, columnspan=2, sticky="ew", pady=4)
+
+    ttk.Button(
+        piv_frame,
+        text="ⓘ",
+        width=2,
+        command=lambda: _show_corr_alg_info(form),
+        takefocus=False,
+    ).grid(row=8, column=3, sticky="e", pady=4)
 
     filt_frame = ttk.LabelFrame(parent, text="Median Filter", padding=8)
     filt_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
@@ -228,8 +280,35 @@ def build_params_panel(parent: ttk.Frame, form: ParamsFormState) -> None:
         filt_frame, width=8, textvariable=form.despike_thr
     ).grid(row=2, column=1, padx=4, pady=4)
 
+    avg_frame = ttk.LabelFrame(parent, text="Spatio-temporal averaging", padding=8)
+    avg_frame.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+
+    ttk.Checkbutton(
+        avg_frame,
+        text="Enable averaging",
+        variable=form.average_enabled,
+    ).grid(row=0, column=0, columnspan=3, sticky="w")
+
+    ttk.Label(avg_frame, text="Spatial radius").grid(row=1, column=0, sticky="w")
+    ttk.Entry(
+        avg_frame, width=8, textvariable=form.average_spatial_radius
+    ).grid(row=1, column=1, padx=4, pady=4)
+
+    ttk.Label(avg_frame, text="Temporal radius").grid(row=2, column=0, sticky="w")
+    form.average_temporal_widget = ttk.Entry(
+        avg_frame, width=8, textvariable=form.average_temporal_radius
+    )
+    form.average_temporal_widget.grid(row=2, column=1, padx=4, pady=4)
+
+    ttk.Button(
+        avg_frame,
+        text="?",
+        width=3,
+        command=_show_spatiotemporal_average_info,
+    ).grid(row=2, column=2, sticky="e", pady=4)
+
     sn_frame = ttk.LabelFrame(parent, text="SN Filter", padding=8)
-    sn_frame.grid(row=2, column=0, sticky="ew")
+    sn_frame.grid(row=3, column=0, sticky="ew")
 
     form.sn_filter_widget = ttk.Checkbutton(
         sn_frame,
@@ -282,6 +361,22 @@ def set_sn_controls_enabled(form: ParamsFormState, *, enabled: bool) -> None:
     if form.sn_filter_widget is not None:
         form.sn_filter_widget.config(state=state)
 
+def set_spatiotemporal_controls_for_mode(
+    form: ParamsFormState,
+    *,
+    spatial_ndim: int,
+) -> None:
+    """Enable or restrict spatio-temporal averaging controls by analysis mode."""
+    if spatial_ndim == 3:
+        form.average_temporal_radius.set("0")
+        if form.average_temporal_widget is not None:
+            form.average_temporal_widget.config(state="disabled")
+    elif spatial_ndim == 2:
+        if form.average_temporal_widget is not None:
+            form.average_temporal_widget.config(state="normal")
+    else:
+        raise ValueError("spatial_ndim must be 2 or 3.")
+    
 def set_parameter_mode_note(
     form: ParamsFormState,
     *,
@@ -316,6 +411,18 @@ def build_workflow_params(
     step_y = _read_int(form.step_y, "step Y")
     step_z = _read_int(form.step_z, "step Z")
 
+    average_spatial_radius = max(
+        0,
+        _read_int(form.average_spatial_radius, "spatio-temporal spatial radius"),
+    )
+    average_temporal_radius = max(
+        0,
+        _read_int(form.average_temporal_radius, "spatio-temporal temporal radius"),
+    )
+
+    if spatial_ndim == 3:
+        average_temporal_radius = 0
+
     if spatial_ndim == 2:
         inter_size = (inter_y, inter_x)
         search_margin = (search_y, search_x)
@@ -348,6 +455,11 @@ def build_workflow_params(
                     if form.sn_filter.get()
                     else 1.0
                 ),
+            ),
+            spatiotemporal_average=SpatioTemporalAverageParams(
+                enabled=bool(form.average_enabled.get()),
+                spatial_radius=average_spatial_radius,
+                temporal_radius=average_temporal_radius,
             ),
         ),
     )

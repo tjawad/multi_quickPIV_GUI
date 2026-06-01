@@ -93,6 +93,22 @@ class SNFilterParams:
 
 
 @dataclass(slots=True)
+class SpatioTemporalAverageParams:
+    """Configuration for backend spatio-temporal averaging."""
+
+    enabled: bool = False
+    spatial_radius: int = 1
+    temporal_radius: int = 0
+
+    def validate(self) -> None:
+        """Validate backend averaging settings."""
+        if self.spatial_radius < 0:
+            raise ValueError("Spatio-temporal averaging spatial radius must be at least 0.")
+        if self.temporal_radius < 0:
+            raise ValueError("Spatio-temporal averaging temporal radius must be at least 0.")
+
+
+@dataclass(slots=True)
 class PostProcessParams:
     """Collection of post-processing settings for a computed vector field."""
 
@@ -100,11 +116,15 @@ class PostProcessParams:
         default_factory=MedianDespikeParams
     )
     sn_filter: SNFilterParams = field(default_factory=SNFilterParams)
+    spatiotemporal_average: SpatioTemporalAverageParams = field(
+        default_factory=SpatioTemporalAverageParams
+    )
 
     def validate(self, *, run: PIVRunParams) -> None:
         """Validate all post-processing settings."""
         self.median_despike.validate()
         self.sn_filter.validate(compute_sn=run.compute_sn)
+        self.spatiotemporal_average.validate()
 
 
 @dataclass(slots=True)

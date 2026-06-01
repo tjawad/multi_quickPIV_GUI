@@ -345,3 +345,175 @@ def run_piv_3d(
             )
 
     return JuliaPIVResult(u=u, v=v, xg=xg, yg=yg, sn=sn, w=w, zg=zg)
+
+def _radius_tuple_literal(radius: tuple[int, ...]) -> str:
+    """Return a Julia tuple literal for a validated non-negative radius tuple."""
+    if not radius:
+        raise ValueError("Backend average radius must not be empty.")
+
+    values = tuple(int(value) for value in radius)
+    if any(value < 0 for value in values):
+        raise ValueError("Backend average radii must be at least 0.")
+
+    return "(" + ", ".join(str(value) for value in values) + ")"
+
+
+def _run_backend_average_vf(
+    vf: np.ndarray,
+    radius: tuple[int, ...],
+) -> np.ndarray:
+    """Run multi_quickPIV.average on one combined backend vector field."""
+    if len(radius) not in {2, 3}:
+        raise ValueError(
+            "multi_quickPIV.average supports 2D or 3D backend radii in this GUI."
+        )
+
+    ensure_julia_initialized()
+
+    assert _J is not None
+
+    _J.backend_average_vf = np.asarray(vf, dtype=np.float64)
+    radius_literal = _radius_tuple_literal(radius)
+
+    _J.eval(
+        "backend_average_out = "
+        f"multi_quickPIV.average({radius_literal}, backend_average_vf)"
+    )
+
+    return np.array(_J.eval("backend_average_out"))
+
+
+def backend_average_vector_field(
+    u: np.ndarray,
+    v: np.ndarray,
+    *,
+    w: np.ndarray | None = None,
+    spatial_radius: int = 1,
+    temporal_radius: int = 0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """
+    Smooth vector fields using multi_quickPIV.average.
+
+    Supported shapes:
+      2D single field:
+        U,V = (H, W)
+
+      2D multi-field:
+        U,V = (T, H, W)
+
+      3D single field:
+        U,V,W = (Z, Y, X)
+
+      3D multi-field:
+        U,V,W = (T, Z, Y, X), spatial smoothing only.
+
+    For 2D multi-field data, temporal_radius is included as the final
+    backend averaging dimension. This averages over a full local space-time
+    block, not quickPIV's original spatial-block-plus-temporal-line algorithm.
+    """
+    spatial_radius = int(spatial_radius)
+    temporal_radius = int(temporal_radius)
+
+    if spatial_radius < 0:
+        raise ValueError("Spatio-temporal averaging spatial radius must be at least 0.")
+    if temporal_radius < 0:
+        raise ValueError("Spatio-temporal averaging temporal radius must be at least 0.")
+
+    u_arr = np.asarray(u, dtype=np.float64)
+    v_arr = np.asarray(v, dtype=np.float64)
+
+    if u_arr.shape != v_arr.shape:
+        raise ValueError("u and v must have the same shape for backend averaging.")
+
+    if spatial_radius == 0 and temporal_radius == 0:
+        w_copy = None if w is None else np.asarray(w, dtype=np.float64).copy()
+        return u_arr.copy(), v_arr.copy(), w_copy
+
+    if w is None:
+        if u_arr.ndim == 2:
+            if temporal_radius > 0:
+                raise ValueError(
+                    "Temporal averaging requires a multi-field 2D result. "
+                    "Use temporal radius 0 for a single 2D vector field."
+                )
+
+            vf = np.stack((u_arr, v_arr), axis=0)
+            averaged = _run_backend_average_vf(
+                vf,
+                (spatial_radius, spatial_radius),
+            )
+            return averaged[0], averaged[1], None
+
+        if u_arr.ndim == 3:
+            # GUI/export shape: (T, H, W)
+            # backend combined VF shape: (component, H, W, T)
+            vf = np.stack(
+                (
+                    np.moveaxis(u_arr, 0, -1),
+                    np.moveaxis(v_arr, 0, -1),
+                ),
+                axis=0,
+            )
+            averaged = _run_backend_average_vf(
+                vf,
+                (spatial_radius, spatial_radius, temporal_radius),
+            )
+
+            u_out = np.moveaxis(averaged[0], -1, 0)
+            v_out = np.moveaxis(averaged[1], -1, 0)
+            return u_out, v_out, None
+
+        raise ValueError(
+            "2D backend averaging expects U,V shaped as (H, W) or (T, H, W)."
+        )
+
+    w_arr = np.asarray(w, dtype=np.float64)
+
+    if w_arr.shape != u_arr.shape:
+        raise ValueError("w must have the same shape as u and v for backend averaging.")
+
+    if temporal_radius > 0:
+        raise ValueError(
+            "Temporal averaging is not supported for 3D PIV with the current "
+            "multi_quickPIV.average backend. Use temporal radius 0 for 3D spatial smoothing."
+        )
+
+    if u_arr.ndim == 3:
+        # Single 3D vector field: (Z, Y, X)
+        vf = np.stack((u_arr, v_arr, w_arr), axis=0)
+        averaged = _run_backend_average_vf(
+            vf,
+            (spatial_radius, spatial_radius, spatial_radius),
+        )
+        return averaged[0], averaged[1], averaged[2]
+
+    if u_arr.ndim == 4:
+        # Multi-field 3D result: (T, Z, Y, X)
+        # Apply spatial-only backend averaging independently to each field.
+        u_fields: list[np.ndarray] = []
+        v_fields: list[np.ndarray] = []
+        w_fields: list[np.ndarray] = []
+
+        for index in range(u_arr.shape[0]):
+            vf = np.stack(
+                (
+                    u_arr[index],
+                    v_arr[index],
+                    w_arr[index],
+                ),
+                axis=0,
+            )
+            averaged = _run_backend_average_vf(
+                vf,
+                (spatial_radius, spatial_radius, spatial_radius),
+            )
+
+            u_fields.append(averaged[0])
+            v_fields.append(averaged[1])
+            w_fields.append(averaged[2])
+
+        return np.stack(u_fields), np.stack(v_fields), np.stack(w_fields)
+
+    raise ValueError(
+        "3D backend averaging expects U,V,W shaped as (Z, Y, X) or (T, Z, Y, X)."
+    )

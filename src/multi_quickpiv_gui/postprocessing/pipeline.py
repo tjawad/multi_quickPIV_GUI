@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from multi_quickpiv_gui.backend.julia_bridge import backend_average_vector_field
 from multi_quickpiv_gui.postprocessing.spatial import (
     median_despike_vector_field,
     sn_threshold_filter,
@@ -22,6 +23,54 @@ class PostProcessResult:
     w: np.ndarray | None = None
     sn: np.ndarray | None = None
     sn_replaced: int = 0
+
+
+def apply_spatiotemporal_average(
+    u: np.ndarray,
+    v: np.ndarray,
+    *,
+    params: WorkflowParams,
+    w: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """
+    Apply backend spatio-temporal averaging using multi_quickPIV.average.
+
+    This is intentionally batch/multi-field only. The goal is to smooth
+    vector-field sequences for animation/export, not to spatially smooth
+    a single vector field.
+    """
+    average = params.postprocess.spatiotemporal_average
+    average.validate()
+
+    u_out = np.asarray(u, dtype=np.float64).copy()
+    v_out = np.asarray(v, dtype=np.float64).copy()
+    w_out = None if w is None else np.asarray(w, dtype=np.float64).copy()
+
+    if not average.enabled:
+        return u_out, v_out, w_out
+
+    is_2d_multifield = w_out is None and u_out.ndim == 3
+    is_3d_multifield = w_out is not None and u_out.ndim == 4
+
+    if not (is_2d_multifield or is_3d_multifield):
+        raise ValueError(
+            "Spatio-temporal averaging is only supported for batch or loaded "
+            "multi-field PIV results."
+        )
+
+    if is_3d_multifield and average.temporal_radius > 0:
+        raise ValueError(
+            "Temporal averaging is not supported yet for 3D PIV. "
+            "Use temporal radius 0 for 3D batch spatial smoothing."
+        )
+
+    return backend_average_vector_field(
+        u_out,
+        v_out,
+        w=w_out,
+        spatial_radius=average.spatial_radius,
+        temporal_radius=average.temporal_radius,
+    )
 
 
 def apply_postprocessing(
