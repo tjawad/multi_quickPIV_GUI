@@ -38,10 +38,11 @@ For 3D PIV, the GUI supports:
 - exporting vector components and grid coordinates
 - exporting ParaView-compatible VTK files for manual 3D visualization
 
-To improve vector fields, optional filtering tools are available:
+The workflow also includes optional post-processing tools for improving computed vector fields:
 
 - median despiking for 2D and 3D vector fields
 - signal-to-noise filtering for 2D PIV only
+- spatio-temporal averaging for batch or loaded multi-field vector-field sequences
 
 During 2D processing, the GUI provides an interactive preview. Individual frames can be viewed, and computed velocity vectors are displayed as a quiver plot over the image data.
 
@@ -126,6 +127,41 @@ python -c "import julia; julia.install()"
 quickpiv-gui
 ```
 
+## Processing workflow
+
+The GUI follows a three-stage processing workflow:
+
+1. **Pre-processing / input conditioning**  
+   Options such as downsampling and background filtering are applied before PIV computation.
+
+2. **PIV computation**  
+   The PIV settings define the interrogation size, search margin, step size, correlation algorithm, and whether signal-to-noise values are computed.
+
+3. **Post-processing**  
+   Post-processing options modify the resulting vector fields after PIV computation. These options can be selected before running PIV so they are applied automatically to the output, or applied later using **Apply post-processing** on the current computed result or on a loaded saved PIV result.
+
+### Post-processing options
+
+The post-processing controls operate on vector fields after they have been computed.
+
+- **Median despike** removes local outlier vectors using a neighbourhood-based median filter.
+- **SN filtering** removes or replaces vectors based on signal-to-noise values when SN values are available.
+- **Spatio-temporal averaging** smooths vector-field sequences using `multi_quickPIV.average`.
+
+Post-processing can be configured before running PIV, in which case it is applied to the generated result, or applied afterward using **Apply post-processing**. The same button can be used for loaded saved PIV results and for the current result displayed in the GUI.
+
+For single vector fields, median despiking and SN filtering can be applied, but spatio-temporal averaging requires a batch or loaded multi-field result.
+
+### Spatio-temporal averaging
+
+Spatio-temporal averaging is intended for smoothing vector-field sequences, such as batch PIV results or loaded multi-field PIV results.
+
+For 2D PIV, the spatial radius defines a square neighbourhood around each vector, and the temporal radius defines how many neighbouring vector fields are included before and after the current field. The operation uses `multi_quickPIV.average`, so it averages over the full local space-time neighbourhood.
+
+For 3D PIV, temporal averaging is not currently supported. The temporal radius is fixed to `0`, and the spatial radius defines a cubic neighbourhood applied to each 3D vector field independently.
+
+Because this implementation uses `multi_quickPIV.average`, it may smooth more strongly than the original quickPIV space-time averaging routine, which combines spatial neighbourhood information with a temporal line through the same location. Use smaller radii when preserving local flow structure is important.
+
 ## Basic workflow
 
 ### 2D PIV workflow
@@ -135,11 +171,12 @@ A typical 2D workflow is:
 1. Start the GUI with `quickpiv-gui`.
 2. Select **Load file for 2D PIV**.
 3. Load a TIFF or HDF5 image stack shaped as `(T, H, W)`.
-4. Adjust the PIV parameters if needed.
+4. Adjust the pre-processing, PIV, and post-processing parameters if needed.
 5. Run a single PIV calculation first to check the result.
 6. If the result looks reasonable, run batch PIV.
-7. Export the computed vector fields as NPZ/HDF5, or as VTK files for ParaView visualization.
-8. Optionally export a video or GIF of the 2D vector fields.
+7. Apply additional post-processing to the current result if needed.
+8. Export the computed vector fields as NPZ/HDF5, or as VTK files for ParaView visualization.
+9. Optionally export a video or GIF of the 2D vector fields.
 
 ### 3D PIV workflow
 
@@ -150,24 +187,22 @@ A typical 3D workflow is:
 3. Load either:
    - one 4D HDF5/TIFF stack shaped as `(T, Z, Y, X)`, or
    - multiple 3D TIFF time-point files, each shaped as `(Z, Y, X)`.
-   When multiple 3D TIFF time-point files are selected, the GUI orders them by filename and shows the sorted order for confirmation before loading. Use zero-padded timepoint names so that filename sorting matches the real acquisition order, for example:
 
-  ```text
-  object_t000.tif
-  object_t001.tif
-  object_t002.tif
-  ```
+   When multiple 3D TIFF time-point files are selected, the GUI orders them by filename and shows the sorted order for confirmation before loading.
 
-  Avoid non-padded names such as object_t1.tif, object_t2.tif, and object_t10.tif, because filename sorting can place t10 before t2.
+   Use zero-padded time-point names so that filename sorting matches the real acquisition order, for example `object_t000.tif`, `object_t001.tif`, and `object_t002.tif`.
 
-4. Adjust the PIV parameters if needed.
+   Avoid non-padded names such as `object_t1.tif`, `object_t2.tif`, and `object_t10.tif`, because filename sorting can place `t10` before `t2`.
+
+4. Adjust the pre-processing, PIV, and post-processing parameters if needed.
 5. Run batch PIV.
-6. Choose one or more output options:
+6. Apply additional post-processing to the current result if needed.
+7. Choose one or more output options:
    - HDF5 (`.h5`) for storing vector data
    - NumPy zipped (`.npz`) for storing vector data
    - VTK (`.vtk`) for ParaView visualization
-7. Export the 3D vector fields.
-8. Open the exported VTK file(s) manually in ParaView to visualize the 3D vector field.
+8. Export the 3D vector fields.
+9. Open the exported VTK file(s) manually in ParaView to visualize the 3D vector field.
 
 ## Loading saved PIV results
 
@@ -182,9 +217,11 @@ For saved 2D PIV results, the GUI displays the vector fields directly. If the re
 
 For saved 3D PIV results, the GUI shows a summary panel instead of rendering the 3D vector field internally. The summary includes the number of fields, vector-component shapes, grid shapes, and whether a `valid_interrogation` mask is present. To visualize 3D vector fields, export the loaded result as VTK and open it in ParaView.
 
-Loaded PIV results can be post-processed using the current post-processing settings and then exported again as `.h5`, `.npz`, or `.vtk`.
+Loaded PIV results can be post-processed using the current post-processing settings and then exported again as `.h5`, `.npz`, or `.vtk`. This provides a way to adjust post-processing settings without rerunning the original PIV computation.
 
-For 3D loaded results, median despiking is available, but signal-to-noise filtering remains disabled.
+For loaded 2D multi-field results, median despiking, SN filtering, and spatio-temporal averaging are available when the required data are present.
+
+For loaded 3D results, median despiking and spatial averaging are available, but signal-to-noise filtering remains disabled and temporal averaging is fixed to `0`.
 
 ## Visualizing 2D PIV results in ParaView
 
