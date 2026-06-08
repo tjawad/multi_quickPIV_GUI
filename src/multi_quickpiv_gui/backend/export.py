@@ -21,6 +21,7 @@ except Exception:
 from multi_quickpiv_gui.workflow.pipeline import BatchPIVResult, PIVPairResult
 
 from multi_quickpiv_gui.backend.io import LoadedPIVResult
+from multi_quickpiv_gui.backend.julia_bridge import backend_vector_magnitudes
 
 
 @dataclass(slots=True)
@@ -333,7 +334,7 @@ def vector_field_2d_to_vtk(
 
     u_write = np.where(finite_arr, u_arr, 0.0)
     v_write = np.where(finite_arr, v_arr, 0.0)
-    direction_mag = np.sqrt(u_write ** 2 + v_write ** 2)
+    direction_mag = backend_vector_magnitudes(u_write, v_write)
 
     ny, nx = u_arr.shape
     npoints = int(u_arr.size)
@@ -433,9 +434,7 @@ def vector_field_to_vtk(
     v_write = np.where(finite_arr, v_arr, 0.0)
     w_write = np.where(finite_arr, w_arr, 0.0)
 
-    direction_mag = np.sqrt(
-        u_write ** 2 + v_write ** 2 + w_write ** 2
-    )
+    direction_mag = backend_vector_magnitudes(u_write, v_write, w=w_write)
 
     data_type = "double"
 

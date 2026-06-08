@@ -18,6 +18,8 @@ from multi_quickpiv_gui.postprocessing.spatial import (
     sn_threshold_filter,
 )
 
+from multi_quickpiv_gui.backend.julia_bridge import backend_vector_magnitudes
+
 __all__ = [
     "PostProcessResult",
     "apply_postprocessing",
@@ -25,4 +27,5 @@ __all__ = [
     "median_despike",
     "median_despike_vector_field",
     "sn_threshold_filter",
+    "backend_vector_magnitudes",
 ]

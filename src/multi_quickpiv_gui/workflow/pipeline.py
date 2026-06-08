@@ -19,20 +19,41 @@ from multi_quickpiv_gui.workflow.params import WorkflowParams
 def _downsample_pair(
     img1: np.ndarray,
     img2: np.ndarray,
-    factor: int,
+    factor: tuple[int, ...],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Apply isotropic pre-PIV downsampling to one frame pair."""
-    if factor < 1:
-        raise ValueError("Downsampling factor must be at least 1.")
-
-    if factor == 1:
-        return img1, img2
+    """Apply per-axis pre-PIV downsampling to one frame pair."""
+    factors = tuple(int(value) for value in factor)
 
     if img1.ndim == 2:
-        return img1[::factor, ::factor], img2[::factor, ::factor]
+        if len(factors) != 2:
+            raise ValueError("2D downsampling requires Y and X factors.")
+
+        factor_y, factor_x = factors
+
+        if factor_y < 1 or factor_x < 1:
+            raise ValueError("Downsampling factors must be at least 1.")
+
+        if factor_y == 1 and factor_x == 1:
+            return img1, img2
+
+        return img1[::factor_y, ::factor_x], img2[::factor_y, ::factor_x]
 
     if img1.ndim == 3:
-        return img1[::factor, ::factor, ::factor], img2[::factor, ::factor, ::factor]
+        if len(factors) != 3:
+            raise ValueError("3D downsampling requires Z, Y, and X factors.")
+
+        factor_z, factor_y, factor_x = factors
+
+        if factor_z < 1 or factor_y < 1 or factor_x < 1:
+            raise ValueError("Downsampling factors must be at least 1.")
+
+        if factor_z == 1 and factor_y == 1 and factor_x == 1:
+            return img1, img2
+
+        return (
+            img1[::factor_z, ::factor_y, ::factor_x],
+            img2[::factor_z, ::factor_y, ::factor_x],
+        )
 
     raise ValueError(
         f"Downsampling supports only 2D or 3D frame pairs, got shape {img1.shape}."

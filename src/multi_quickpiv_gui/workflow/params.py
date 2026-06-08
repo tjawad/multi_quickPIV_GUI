@@ -26,7 +26,7 @@ class PIVRunParams:
     compute_sn: bool = True
     corr_alg: CorrAlg = "nsqecc"
     background_filter: BackgroundFilterLevel = "Off"
-    downsample_factor: int = 1
+    downsample_factor: SizeND = (1, 1)
 
     def validate(self) -> None:
         """Validate the full run configuration."""
@@ -54,9 +54,14 @@ class PIVRunParams:
             )
 
     def _validate_downsample_factor(self) -> None:
-        """Validate the pre-PIV downsampling factor."""
-        if self.downsample_factor < 1:
-            raise ValueError("Downsampling factor must be at least 1.")
+        """Validate the pre-PIV downsampling factors."""
+        if len(self.downsample_factor) not in {2, 3}:
+            raise ValueError(
+                "Downsampling must contain exactly 2 or 3 integer factors."
+            )
+
+        if any(component < 1 for component in self.downsample_factor):
+            raise ValueError("Downsampling factors must be at least 1.")
 
 
 @dataclass(slots=True)

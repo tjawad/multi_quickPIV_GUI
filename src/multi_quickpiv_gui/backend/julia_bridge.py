@@ -383,6 +383,88 @@ def _run_backend_average_vf(
     return np.array(_J.eval("backend_average_out"))
 
 
+def _run_backend_magnitudes_vf(vf: np.ndarray) -> np.ndarray:
+    """Run multi_quickPIV.magnitudes on one combined backend vector field."""
+    ensure_julia_initialized()
+
+    assert _J is not None
+
+    _J.backend_magnitudes_vf = np.asarray(vf, dtype=np.float64)
+    _J.eval(
+        "backend_magnitudes_out = "
+        "multi_quickPIV.magnitudes(backend_magnitudes_vf)"
+    )
+
+    return np.array(_J.eval("backend_magnitudes_out"))
+
+
+def backend_vector_magnitudes(
+    u: np.ndarray,
+    v: np.ndarray,
+    *,
+    w: np.ndarray | None = None,
+) -> np.ndarray:
+    """
+    Compute vector magnitude using multi_quickPIV.magnitudes.
+
+    Supported shapes:
+      2D single field:
+        U,V = (H, W) -> magnitude = (H, W)
+
+      2D multi-field:
+        U,V = (T, H, W) -> magnitude = (T, H, W)
+
+      3D single field:
+        U,V,W = (Z, Y, X) -> magnitude = (Z, Y, X)
+
+      3D multi-field:
+        U,V,W = (T, Z, Y, X) -> magnitude = (T, Z, Y, X)
+    """
+    u_arr = np.asarray(u, dtype=np.float64)
+    v_arr = np.asarray(v, dtype=np.float64)
+
+    if u_arr.shape != v_arr.shape:
+        raise ValueError("u and v must have the same shape for magnitude calculation.")
+
+    if w is None:
+        if u_arr.ndim == 2:
+            vf = np.stack((u_arr, v_arr), axis=0)
+            return _run_backend_magnitudes_vf(vf)
+
+        if u_arr.ndim == 3:
+            magnitudes = []
+            for index in range(u_arr.shape[0]):
+                vf = np.stack((u_arr[index], v_arr[index]), axis=0)
+                magnitudes.append(_run_backend_magnitudes_vf(vf))
+            return np.stack(magnitudes)
+
+        raise ValueError(
+            "2D magnitude expects U,V shaped as (H, W) or (T, H, W)."
+        )
+
+    w_arr = np.asarray(w, dtype=np.float64)
+
+    if w_arr.shape != u_arr.shape:
+        raise ValueError(
+            "w must have the same shape as u and v for magnitude calculation."
+        )
+
+    if u_arr.ndim == 3:
+        vf = np.stack((u_arr, v_arr, w_arr), axis=0)
+        return _run_backend_magnitudes_vf(vf)
+
+    if u_arr.ndim == 4:
+        magnitudes = []
+        for index in range(u_arr.shape[0]):
+            vf = np.stack((u_arr[index], v_arr[index], w_arr[index]), axis=0)
+            magnitudes.append(_run_backend_magnitudes_vf(vf))
+        return np.stack(magnitudes)
+
+    raise ValueError(
+        "3D magnitude expects U,V,W shaped as (Z, Y, X) or (T, Z, Y, X)."
+    )
+
+
 def backend_average_vector_field(
     u: np.ndarray,
     v: np.ndarray,

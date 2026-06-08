@@ -45,6 +45,7 @@ from multi_quickpiv_gui.runtime.batch import BatchRuntimeState
 from multi_quickpiv_gui.backend.core import (
     apply_postprocessing,
     apply_spatiotemporal_average,
+    backend_vector_magnitudes,
 )
 
 from multi_quickpiv_gui.gui.params_form import (
@@ -84,7 +85,11 @@ class MultiQuickPIVApp:
         self.analysis_mode: str = "2d"
         self._show_3d_load_info: bool = True
         self.preview_state = PreviewState()
+        self.analysis_display_mode: str = "vector_field"
+        self._displacement_magnitude_heatmap_limits: tuple[float, float] | None = None
         self._status_after_id: str | None = None
+        self._play_after_id: str | None = None
+        self._is_playing: bool = False
         self.params_form: ParamsFormState = create_params_form_state(self.root)
 
         self.batch = BatchRuntimeState()
@@ -161,9 +166,19 @@ class MultiQuickPIVApp:
 
         slider_frame = ttk.Frame(parent)
         slider_frame.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        slider_frame.columnconfigure(1, weight=1)
+        slider_frame.columnconfigure(2, weight=1)
 
         ttk.Label(slider_frame, text="Frame").grid(row=0, column=0, sticky="w")
+
+        self.btn_play_frames = ttk.Button(
+            slider_frame,
+            text="▶",
+            width=3,
+            command=self.on_toggle_playback,
+        )
+        self.btn_play_frames.grid(row=0, column=1, sticky="w", padx=(8, 6))
+        self.btn_play_frames.config(state="disabled")
+
         self.slider_frame = tk.Scale(
             slider_frame,
             from_=0,
@@ -172,7 +187,7 @@ class MultiQuickPIVApp:
             variable=self.var_frame,
             command=self._on_frame_slider,
         )
-        self.slider_frame.grid(row=0, column=1, sticky="ew")
+        self.slider_frame.grid(row=0, column=2, sticky="ew")
 
     def _build_action_panel(self, parent: ttk.Frame) -> None:
         self.btn_load = ttk.Button(
@@ -250,6 +265,28 @@ class MultiQuickPIVApp:
         )
         self.progress = ttk.Progressbar(parent, mode="determinate", length=220)
         self.progress.grid(row=13, column=0, sticky="ew")
+
+        ttk.Separator(parent, orient="horizontal").grid(
+            row=14, column=0, sticky="ew", pady=(16, 8)
+        )
+
+        ttk.Label(parent, text="Analysis display").grid(
+            row=15, column=0, sticky="w", pady=(0, 4)
+        )
+
+        self.btn_display_vector_field = ttk.Button(
+            parent,
+            text="Vector field",
+            command=self.on_show_vector_field,
+        )
+        self.btn_display_vector_field.grid(row=16, column=0, sticky="ew", pady=4)
+
+        self.btn_display_displacement_magnitude_heatmap = ttk.Button(
+            parent,
+            text="Displacement magnitude heatmap",
+            command=self.on_show_displacement_magnitude_heatmap,
+        )
+        self.btn_display_displacement_magnitude_heatmap.grid(row=17, column=0, sticky="ew", pady=4)
         
     def _set_batch_running_state(self) -> None:
         """Disable normal actions and enable batch controls during a running batch."""
@@ -264,6 +301,8 @@ class MultiQuickPIVApp:
         self.btn_continue.config(state="disabled")
         self.btn_abort.config(state="normal")
         self.btn_apply_postprocess.config(state="disabled")
+        self.btn_display_vector_field.config(state="disabled")
+        self.btn_display_displacement_magnitude_heatmap.config(state="disabled")
 
     def _set_batch_idle_state(self) -> None:
         """Restore normal actions after a batch stops or finishes."""
@@ -291,17 +330,82 @@ class MultiQuickPIVApp:
         self.btn_pause.config(state="disabled")
         self.btn_continue.config(state="disabled")
         self.btn_abort.config(state="disabled")
-    
+        self._set_analysis_display_state()
+
     def _set_idle_state(self) -> None:
         self.btn_single.config(state="disabled")
         self.btn_batch.config(state="disabled")
         self.btn_export.config(state="disabled")
         self.btn_export_video.config(state="disabled")
         self.btn_apply_postprocess.config(state="disabled")
+        self.btn_display_vector_field.config(state="disabled")
+        self.btn_display_displacement_magnitude_heatmap.config(state="disabled")
+
+    def _max_slider_frame(self) -> int:
+        """Return the current maximum frame index of the preview slider."""
+        try:
+            return int(float(self.slider_frame.cget("to")))
+        except Exception:
+            return 0
+
+    def _set_play_button_state(self) -> None:
+        """Enable playback only for 2D displays with more than one frame."""
+        if self.analysis_mode != "2d":
+            self._stop_playback()
+            self.btn_play_frames.config(state="disabled")
+            return
+
+        if self._max_slider_frame() > 0:
+            self.btn_play_frames.config(state="normal")
+        else:
+            self._stop_playback()
+            self.btn_play_frames.config(state="disabled")
+
+    def _stop_playback(self) -> None:
+        """Stop frame playback if it is running."""
+        if self._play_after_id is not None:
+            try:
+                self.root.after_cancel(self._play_after_id)
+            except tk.TclError:
+                pass
+
+        self._play_after_id = None
+        self._is_playing = False
+
+        if hasattr(self, "btn_play_frames"):
+            self.btn_play_frames.config(text="▶")
+
+    def on_toggle_playback(self) -> None:
+        """Start or stop playback through the frame slider."""
+        if self._is_playing:
+            self._stop_playback()
+            return
+
+        if self._max_slider_frame() <= 0:
+            return
+
+        self._is_playing = True
+        self.btn_play_frames.config(text="⏸")
+        self._play_next_frame()
+
+    def _play_next_frame(self) -> None:
+        """Advance the frame slider and keep the current analysis display mode."""
+        if not self._is_playing:
+            return
+
+        max_frame = self._max_slider_frame()
+        current_frame = int(self.var_frame.get())
+        next_frame = 0 if current_frame >= max_frame else current_frame + 1
+
+        self.var_frame.set(next_frame)
+        self._show_current_analysis_display(next_frame)
+
+        self._play_after_id = self.root.after(350, self._play_next_frame)
 
     def _set_loaded_state(self) -> None:
         self.btn_apply_postprocess.config(state="disabled")
-        
+        self._set_analysis_display_state()
+
         if self.analysis_mode == "3d":
             self.btn_single.config(state="disabled")
             self.btn_batch.config(state="normal")
@@ -327,7 +431,9 @@ class MultiQuickPIVApp:
         self.params_form.step_z.set("32")
 
         self.params_form.background_filter.set("Off")
-        self.params_form.downsample_factor.set("1×")
+        self.params_form.downsample_x.set("1")
+        self.params_form.downsample_y.set("1")
+        self.params_form.downsample_z.set("1")
 
     def _apply_3d_parameter_defaults(self) -> None:
         """Apply practical default parameters for 3D PIV."""
@@ -344,7 +450,9 @@ class MultiQuickPIVApp:
         self.params_form.step_z.set("10")
 
         self.params_form.background_filter.set("High")
-        self.params_form.downsample_factor.set("3×")
+        self.params_form.downsample_x.set("3")
+        self.params_form.downsample_y.set("3")
+        self.params_form.downsample_z.set("3")
         self.params_form.average_temporal_radius.set("0")
 
     def _show_loaded_frame(self, frame_index: int) -> None:
@@ -356,6 +464,7 @@ class MultiQuickPIVApp:
             return
 
         frame = self.loaded_stack.data[frame_index]
+        self._reset_preview_axis()
         draw_loaded_frame(
             self.preview_ax,
             self.preview_canvas,
@@ -363,19 +472,31 @@ class MultiQuickPIVApp:
             frame,
             title=f"Frame {frame_index}",
         )
+
+    def _reset_preview_axis(self) -> None:
+        """Reset the central preview figure to a single clean axes."""
+        self.figure.clear()
+        self.preview_ax = self.figure.add_subplot(111)
+        reset_preview_state(self.preview_state)
     
     def _show_3d_summary(self, *, title: str = "3D PIV") -> None:
-        """Show a text summary for 3D mode instead of an image/vector preview."""
-        self.preview_ax.clear()
+        """Show a concise text summary for 3D mode."""
+        self._reset_preview_axis()
         self.preview_ax.axis("off")
         self.preview_ax.set_title(title)
 
-        timing_line: str | None = None
-        timing_color: str | None = None
         timing_line_index: int | None = None
+        timing_color: str | None = None
 
         if self.loaded_stack is None:
-            summary = "No 3D stack loaded."
+            summary_lines = [
+                "3D PIV mode",
+                "",
+                "No 3D stack loaded.",
+                "",
+                "In-GUI analysis display is currently 2D only.",
+                "For 3D visualization, export VTK and open it in ParaView.",
+            ]
         else:
             stack_label = self.loaded_stack.dataset_name or self.loaded_stack.source_path.name
             num_pairs = max(self.loaded_stack.num_frames - 1, 0)
@@ -385,19 +506,17 @@ class MultiQuickPIVApp:
             )
 
             summary_lines = [
-                "3D PIV results are saved for external visualization and analysis.",
+                "3D PIV mode",
                 "",
                 f"Input: {stack_label}",
-                f"Time points (T): {self.loaded_stack.num_frames}",
-                f"Frame pairs: {num_pairs}",
                 f"Shape (T, Z, Y, X): {self.loaded_stack.shape}",
+                f"Time points: {self.loaded_stack.num_frames}",
+                f"Frame pairs: {num_pairs}",
                 "",
-                "Available:",
-                "  - batch 3D PIV",
-                "  - export to HDF5 and/or NPZ",
-                "  - export VTK for ParaView",
+                "Current 3D outputs:",
                 "  - U, V, W vector components",
                 "  - xgrid, ygrid, zgrid coordinates",
+                "  - valid_interrogation mask",
                 f"  - 3D median despike: currently {median_state}",
             ]
 
@@ -410,15 +529,13 @@ class MultiQuickPIVApp:
 
                 if self._last_pair_elapsed_seconds is not None:
                     pair_label = self._last_3d_pair_label or "last pair"
-                    timing_line = (
-                        f"  - {pair_label}: {self._last_pair_elapsed_seconds:.1f} s"
-                    )
+                    timing_line_index = len(summary_lines)
                     timing_color = self._3d_timing_colors[
                         self._3d_timing_color_index % len(self._3d_timing_colors)
                     ]
-
-                    timing_line_index = len(summary_lines)
-                    summary_lines.append("")
+                    summary_lines.append(
+                        f"  - {pair_label}: {self._last_pair_elapsed_seconds:.1f} s"
+                    )
 
                 if self._last_3d_batch_elapsed_seconds is not None:
                     summary_lines.append(
@@ -426,47 +543,50 @@ class MultiQuickPIVApp:
                     )
 
                 if self._last_3d_export_summary is not None:
-                    summary_lines.append(f"  - exported: {self._last_3d_export_summary}")
+                    summary_lines.append(
+                        f"  - exported: {self._last_3d_export_summary}"
+                    )
 
             summary_lines.extend(
                 [
                     "",
                     "3D visualization:",
-                    "  - open exported VTK files manually in ParaView",
+                    "  - export VTK and open it in ParaView",
+                    "  - Threshold: valid_interrogation = 1",
+                    "  - Glyph orientation: directions",
+                    "  - Glyph scale/color: direction_mag",
                     "",
-                    "Not provided for 3D mode:",
-                    "  - in-GUI 3D image/vector preview",
+                    "In-GUI analysis display:",
+                    "  - available for 2D PIV only",
+                    "  - 3D heatmap/vector preview is not shown in this GUI",
+                    "",
+                    "Not available for 3D:",
                     "  - video/GIF export",
                     "  - computeSN",
                     "  - SN filtering",
                 ]
             )
 
-            summary = "\n".join(summary_lines)
+        line_step = 0.04
+        font_size = 10
 
-        self.preview_ax.text(
-            0.03,
-            0.97,
-            summary,
-            transform=self.preview_ax.transAxes,
-            va="top",
-            ha="left",
-            fontsize=11,
-            family="monospace",
-        )
-        if timing_line is not None and timing_line_index is not None:
-            y_pos = 0.97 - (timing_line_index * 0.035)
+        for line_index, line in enumerate(summary_lines):
+            color = (
+                timing_color
+                if timing_line_index is not None and line_index == timing_line_index
+                else "black"
+            )
 
             self.preview_ax.text(
                 0.03,
-                y_pos,
-                timing_line,
+                0.97 - (line_index * line_step),
+                line,
                 transform=self.preview_ax.transAxes,
                 va="top",
                 ha="left",
-                fontsize=11,
+                fontsize=font_size,
                 family="monospace",
-                color=timing_color or "tab:blue",
+                color=color,
             )
 
         self.preview_canvas.draw()
@@ -478,7 +598,7 @@ class MultiQuickPIVApp:
         title: str = "Loaded 3D PIV result",
     ) -> None:
         """Show a summary for loaded 3D PIV results instead of visualizing them."""
-        self.preview_ax.clear()
+        self._reset_preview_axis()
         self.preview_ax.axis("off")
         self.preview_ax.set_title(title)
 
@@ -532,6 +652,7 @@ class MultiQuickPIVApp:
         self.preview_canvas.draw()
 
     def _show_pair_result(self, result: PIVPairResult, *, title: str) -> None:
+        self._reset_preview_axis()
         ensure_preview_artists(
             self.preview_ax,
             self.preview_canvas,
@@ -544,6 +665,305 @@ class MultiQuickPIVApp:
             result.v,
             title=title,
         )
+
+    def _has_2d_analysis_result(self) -> bool:
+        """Return True when a 2D result is available for analysis display."""
+        if self.loaded_piv_result is not None:
+            return self.loaded_piv_result.is_2d
+
+        return self.analysis_mode == "2d" and self.current_result is not None
+
+    def _set_analysis_display_state(self) -> None:
+        """Enable or disable analysis-display controls."""
+        state = "normal" if self._has_2d_analysis_result() else "disabled"
+
+        self.btn_display_vector_field.config(state=state)
+        self.btn_display_displacement_magnitude_heatmap.config(state=state)
+
+    def _clear_displacement_magnitude_heatmap_limits(self) -> None:
+        """Clear cached heatmap scale limits after result changes."""
+        self._displacement_magnitude_heatmap_limits = None
+
+    def _draw_displacement_magnitude_heatmap(
+        self,
+        magnitude: np.ndarray,
+        xg: np.ndarray,
+        yg: np.ndarray,
+        *,
+        title: str,
+        vmin: float,
+        vmax: float,
+    ) -> None:
+        """Draw a 2D displacement magnitude heatmap in the preview panel."""
+        magnitude_arr = np.asarray(magnitude, dtype=np.float64)
+
+        if magnitude_arr.ndim != 2:
+            raise ValueError(
+                f"Displacement magnitude heatmap preview expects a 2D magnitude map, "
+                f"got shape {magnitude_arr.shape}."
+            )
+
+        self._reset_preview_axis()
+
+        extent = None
+        if xg.shape == magnitude_arr.shape and yg.shape == magnitude_arr.shape:
+            extent = (
+                float(np.nanmin(xg)),
+                float(np.nanmax(xg)),
+                float(np.nanmax(yg)),
+                float(np.nanmin(yg)),
+            )
+
+        image = self.preview_ax.imshow(
+            np.ma.masked_invalid(magnitude_arr),
+            origin="upper",
+            aspect="equal",
+            extent=extent,
+            vmin=vmin,
+            vmax=vmax,
+        )
+
+        self.preview_ax.set_title(title)
+        self.preview_ax.set_xlabel("x")
+        self.preview_ax.set_ylabel("y")
+
+        self.figure.colorbar(
+            image,
+            ax=self.preview_ax,
+            fraction=0.046,
+            pad=0.04,
+            label="Displacement magnitude",
+        )
+
+        self.preview_canvas.draw()
+
+    def _iter_2d_analysis_fields(
+        self,
+    ) -> list[tuple[np.ndarray, np.ndarray]]:
+        """Return all 2D U,V fields in the active result for shared heatmap scaling."""
+        if self.loaded_piv_result is not None:
+            result = self.loaded_piv_result
+
+            if not result.is_2d:
+                raise ValueError(
+                    "Displacement magnitude heatmap is currently available for 2D PIV results only."
+                )
+
+            if result.u.ndim == 2:
+                return [(result.u, result.v)]
+
+            if result.u.ndim == 3:
+                return [
+                    (result.u[index], result.v[index])
+                    for index in range(result.u.shape[0])
+                ]
+
+            raise ValueError(f"Unsupported loaded 2D U shape: {result.u.shape}")
+
+        if isinstance(self.current_result, BatchPIVResult):
+            if self.analysis_mode != "2d":
+                raise ValueError(
+                    "Displacement magnitude heatmap is currently available for 2D PIV results only."
+                )
+
+            return [
+                (pair.u, pair.v)
+                for pair in self.current_result.pair_results
+                if pair.w is None
+            ]
+
+        if isinstance(self.current_result, PIVPairResult):
+            if self.current_result.w is not None:
+                raise ValueError(
+                    "Displacement magnitude heatmap is currently available for 2D PIV results only."
+                )
+
+            return [(self.current_result.u, self.current_result.v)]
+
+        raise ValueError(
+            "Compute or load a 2D PIV result before using analysis display."
+        )
+
+    def _get_displacement_magnitude_heatmap_limits(self) -> tuple[float, float]:
+        """Compute one shared color scale for all frames in the active 2D result."""
+        if self._displacement_magnitude_heatmap_limits is not None:
+            return self._displacement_magnitude_heatmap_limits
+
+        finite_min: float | None = None
+        finite_max: float | None = None
+
+        for u, v in self._iter_2d_analysis_fields():
+            magnitude = backend_vector_magnitudes(u, v)
+            finite_values = np.asarray(magnitude, dtype=np.float64)
+            finite_values = finite_values[np.isfinite(finite_values)]
+
+            if finite_values.size == 0:
+                continue
+
+            current_min = float(np.min(finite_values))
+            current_max = float(np.max(finite_values))
+
+            finite_min = (
+                current_min if finite_min is None else min(finite_min, current_min)
+            )
+            finite_max = (
+                current_max if finite_max is None else max(finite_max, current_max)
+            )
+
+        if finite_min is None or finite_max is None:
+            raise ValueError("No finite displacement magnitude values are available.")
+
+        if finite_min == finite_max:
+            finite_max = finite_min + 1.0
+
+        self._displacement_magnitude_heatmap_limits = (finite_min, finite_max)
+        return self._displacement_magnitude_heatmap_limits
+
+    def _get_2d_analysis_source(
+        self,
+        frame_index: int | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, str]:
+        """Return U, V, xgrid, ygrid, and title for the selected 2D result."""
+        if frame_index is None:
+            frame_index = int(self.var_frame.get())
+
+        if self.loaded_piv_result is not None:
+            result = self.loaded_piv_result
+
+            if not result.is_2d:
+                raise ValueError(
+                    "Analysis display is currently available for 2D PIV results only."
+                )
+
+            if result.u.ndim == 2:
+                return (
+                    result.u,
+                    result.v,
+                    result.xg,
+                    result.yg,
+                    "Loaded 2D displacement magnitude",
+                )
+
+            if result.u.ndim == 3:
+                idx = max(0, min(frame_index, result.u.shape[0] - 1))
+                return (
+                    result.u[idx],
+                    result.v[idx],
+                    result.xg,
+                    result.yg,
+                    f"Loaded 2D displacement magnitude: Field {idx}",
+                )
+
+            raise ValueError(f"Unsupported loaded 2D U shape: {result.u.shape}")
+
+        if isinstance(self.current_result, BatchPIVResult):
+            if self.analysis_mode != "2d":
+                raise ValueError(
+                    "Analysis display is currently available for 2D PIV results only."
+                )
+
+            if not self.current_result.pair_results:
+                raise ValueError("Current batch result contains no vector fields.")
+
+            idx = max(
+                0,
+                min(frame_index, len(self.current_result.pair_results) - 1),
+            )
+            pair = self.current_result.pair_results[idx]
+
+            return (
+                pair.u,
+                pair.v,
+                pair.xg,
+                pair.yg,
+                f"Batch displacement magnitude: Frame {idx} → {idx + 1}",
+            )
+
+        if isinstance(self.current_result, PIVPairResult):
+            if self.current_result.w is not None:
+                raise ValueError(
+                    "Analysis display is currently available for 2D PIV results only."
+                )
+
+            if self.current_single_pair_indices is not None:
+                t1, t2 = self.current_single_pair_indices
+                title = f"Single displacement magnitude: Frame {t1} → {t2}"
+            else:
+                title = "Single displacement magnitude"
+
+            return (
+                self.current_result.u,
+                self.current_result.v,
+                self.current_result.xg,
+                self.current_result.yg,
+                title,
+            )
+
+        raise ValueError(
+            "Compute or load a 2D PIV result before using analysis display."
+        )
+
+    def _show_displacement_magnitude_heatmap_for_frame_index(self, frame_index: int) -> None:
+        """Show the displacement magnitude heatmap for a specific frame using shared scale limits."""
+        u, v, xg, yg, title = self._get_2d_analysis_source(frame_index)
+        magnitude = backend_vector_magnitudes(u, v)
+        vmin, vmax = self._get_displacement_magnitude_heatmap_limits()
+
+        self._draw_displacement_magnitude_heatmap(
+            magnitude,
+            xg,
+            yg,
+            title=title,
+            vmin=vmin,
+            vmax=vmax,
+        )
+
+    def _show_current_analysis_display(self, frame_index: int) -> None:
+        """Refresh the central display while preserving the selected display mode."""
+        if (
+            self.analysis_display_mode == "displacement_magnitude_heatmap"
+            and self._has_2d_analysis_result()
+        ):
+            self._show_displacement_magnitude_heatmap_for_frame_index(frame_index)
+            return
+
+        self._show_result_for_frame_index(frame_index)
+
+    def on_show_vector_field(self) -> None:
+        """Show the selected 2D vector field result."""
+        try:
+            if not self._has_2d_analysis_result():
+                raise ValueError(
+                    "Vector-field display is currently available for 2D PIV results only."
+                )
+
+            self.analysis_display_mode = "vector_field"
+            self._show_current_analysis_display(int(self.var_frame.get()))
+            self.var_result.set("Vector-field display shown.")
+            self._set_status("Vector-field display shown", 3000)
+
+        except Exception as exc:
+            messagebox.showerror("Analysis display error", str(exc))
+            self.var_result.set(f"Analysis display failed: {exc}")
+            self._set_status("Analysis display failed")
+
+    def on_show_displacement_magnitude_heatmap(self) -> None:
+        """Compute and show the displacement magnitude heatmap for the selected 2D result."""
+        try:
+            self.analysis_display_mode = "displacement_magnitude_heatmap"
+            self._show_current_analysis_display(int(self.var_frame.get()))
+
+            vmin, vmax = self._get_displacement_magnitude_heatmap_limits()
+            self.var_result.set(
+                f"Displacement magnitude heatmap shown: shared scale "
+                f"min={vmin:.3g}, max={vmax:.3g}"
+            )
+            self._set_status("Displacement magnitude heatmap shown", 3000)
+
+        except Exception as exc:
+            messagebox.showerror("Displacement magnitude heatmap error", str(exc))
+            self.var_result.set(f"Displacement magnitude heatmap failed: {exc}")
+            self._set_status("Displacement magnitude heatmap failed")
 
     def _set_result_view_state(self) -> None:
         """UI state for inspecting a saved PIV result without an image stack."""
@@ -563,6 +983,7 @@ class MultiQuickPIVApp:
             )
             else "disabled"
         )
+        self._set_analysis_display_state()
 
     def _loaded_piv_field_count(self) -> int:
         """Return the number of vector fields in the loaded saved result."""
@@ -595,6 +1016,7 @@ class MultiQuickPIVApp:
                 f"Unsupported saved 2D U shape: {result.u.shape}"
             )
 
+        self._reset_preview_axis()
         draw_vector_field_only(
             self.preview_ax,
             self.preview_canvas,
@@ -738,9 +1160,14 @@ class MultiQuickPIVApp:
         self.var_result.set(message)
 
     def _on_frame_slider(self, _value: str) -> None:
-        if self.loaded_stack is None and self.loaded_piv_result is None:
+        if (
+            self.loaded_stack is None
+            and self.loaded_piv_result is None
+            and self.current_result is None
+        ):
             return
-        self._show_result_for_frame_index(int(self.var_frame.get()))
+
+        self._show_current_analysis_display(int(self.var_frame.get()))
         
     def on_load_file(self) -> None:
         path = filedialog.askopenfilename(
@@ -780,6 +1207,8 @@ class MultiQuickPIVApp:
 
             self.slider_frame.config(to=max(loaded.num_frames - 1, 0))
             self.var_frame.set(0)
+            self._clear_displacement_magnitude_heatmap_limits()
+            self._set_play_button_state()
             self._show_loaded_frame(0)
             self._set_loaded_state()
             self.btn_export.config(state="disabled")
@@ -873,6 +1302,8 @@ class MultiQuickPIVApp:
 
             self.slider_frame.config(to=0)
             self.var_frame.set(0)
+            self._clear_displacement_magnitude_heatmap_limits()
+            self._set_play_button_state()
 
             self._show_3d_summary(title="3D stack loaded")
 
@@ -937,6 +1368,8 @@ class MultiQuickPIVApp:
             field_count = self._loaded_piv_field_count()
             self.slider_frame.config(to=max(field_count - 1, 0))
             self.var_frame.set(0)
+            self._clear_displacement_magnitude_heatmap_limits()
+            self._set_play_button_state()
             self._show_loaded_piv_result(0)
             self._set_result_view_state()
             self.btn_export_video.config(
@@ -984,6 +1417,10 @@ class MultiQuickPIVApp:
             )
             self.current_result = result
             self.current_single_pair_indices = (t1, t1 + 1)
+            self.slider_frame.config(to=0)
+            self.var_frame.set(0)
+            self._clear_displacement_magnitude_heatmap_limits()
+            self._set_play_button_state()
             self.current_export_name_hint = self._build_export_name_hint(
                 mode="single",
                 frame1_idx=t1,
@@ -1000,6 +1437,8 @@ class MultiQuickPIVApp:
             self._set_status("Single PIV complete", 3000)
             self.btn_export.config(state="normal")
             self.btn_export_video.config(state="disabled")
+            self._set_analysis_display_state()
+
         except Exception as exc:
             messagebox.showerror("Run error", str(exc))
             self.var_result.set(f"Single PIV failed: {exc}")
@@ -1106,6 +1545,10 @@ class MultiQuickPIVApp:
             self.current_result = result
             self.current_single_pair_indices = None
             self.current_export_name_hint = self._build_export_name_hint(mode="batch")
+            self.slider_frame.config(to=max(len(result.pair_results) - 1, 0))
+            self.var_frame.set(0)
+            self._clear_displacement_magnitude_heatmap_limits()
+            self._set_play_button_state()
             self.batch.reset()
             self._set_batch_idle_state()
             self.btn_export_video.config(
@@ -1548,9 +1991,10 @@ class MultiQuickPIVApp:
                 self.loaded_piv_result = self._postprocess_loaded_piv_result(
                     self.loaded_piv_result
                 )
+                self._clear_displacement_magnitude_heatmap_limits()
 
                 field_index = int(self.var_frame.get())
-                self._show_loaded_piv_result(field_index)
+                self._show_current_analysis_display(field_index)
 
                 self.btn_export.config(state="normal")
                 self._set_status("Post-processing applied", 3000)
@@ -1558,6 +2002,7 @@ class MultiQuickPIVApp:
                     f"Post-processing applied to loaded "
                     f"{'3D' if self.loaded_piv_result.is_3d else '2D'} PIV result."
                 )
+                self._set_analysis_display_state()
                 return
 
             if isinstance(self.current_result, PIVPairResult):
@@ -1592,19 +2037,21 @@ class MultiQuickPIVApp:
                     valid_interrogation=self.current_result.valid_interrogation,
                 )
 
-                self._show_result_for_frame_index(int(self.var_frame.get()))
+                self._show_current_analysis_display(int(self.var_frame.get()))
                 self.btn_export.config(state="normal")
                 self._set_status("Post-processing applied", 3000)
                 self.var_result.set("Post-processing applied to current single PIV result.")
+                self._set_analysis_display_state()
                 return
 
             if isinstance(self.current_result, BatchPIVResult):
                 self.current_result = self._postprocess_current_batch_result(
                     self.current_result
                 )
+                self._clear_displacement_magnitude_heatmap_limits()
 
                 frame_index = int(self.var_frame.get())
-                self._show_result_for_frame_index(frame_index)
+                self._show_current_analysis_display(frame_index)
 
                 self.btn_export.config(state="normal")
                 self.btn_export_video.config(
@@ -1615,6 +2062,7 @@ class MultiQuickPIVApp:
                     f"Post-processing applied to current "
                     f"{'3D' if self.analysis_mode == '3d' else '2D'} batch result."
                 )
+                self._set_analysis_display_state()
                 return
 
             raise ValueError("Unsupported result type for post-processing.")

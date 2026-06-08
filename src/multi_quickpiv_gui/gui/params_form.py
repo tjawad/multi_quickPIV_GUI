@@ -34,7 +34,9 @@ class ParamsFormState:
     compute_sn: tk.BooleanVar
     corr_alg: tk.StringVar
     background_filter: tk.StringVar
-    downsample_factor: tk.StringVar
+    downsample_x: tk.StringVar
+    downsample_y: tk.StringVar
+    downsample_z: tk.StringVar
 
     despike: tk.BooleanVar
     despike_ksize: tk.StringVar
@@ -87,7 +89,9 @@ def create_params_form_state(master: tk.Misc) -> ParamsFormState:
         compute_sn=tk.BooleanVar(master=master, value=True),
         corr_alg=tk.StringVar(master=master, value="nsqecc"),
         background_filter=tk.StringVar(master=master, value="Off"),
-        downsample_factor=tk.StringVar(master=master, value="1×"),
+        downsample_x=tk.StringVar(master=master, value="1"),
+        downsample_y=tk.StringVar(master=master, value="1"),
+        downsample_z=tk.StringVar(master=master, value="1"),
         despike=tk.BooleanVar(master=master, value=False),
         despike_ksize=tk.StringVar(master=master, value="3"),
         despike_thr=tk.StringVar(master=master, value="3.5"),
@@ -109,6 +113,10 @@ def create_params_form_state(master: tk.Misc) -> ParamsFormState:
     _auto_fill_following_fields(
         form.step_x,
         (form.step_y, form.step_z),
+    )
+    _auto_fill_following_fields(
+        form.downsample_x,
+        (form.downsample_y, form.downsample_z),
     )
 
     return form
@@ -208,14 +216,15 @@ def build_params_panel(parent: ttk.Frame, form: ParamsFormState) -> None:
     ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(6, 0))
 
     ttk.Label(piv_frame, text="Downsampling").grid(row=5, column=0, sticky="w")
-    downsample_combo = ttk.Combobox(
-        piv_frame,
-        textvariable=form.downsample_factor,
-        values=("1×", "2×", "3×", "4×"),
-        width=12,
-        state="readonly",
-    )
-    downsample_combo.grid(row=5, column=1, columnspan=3, sticky="ew", pady=4)
+    ttk.Entry(
+        piv_frame, width=8, textvariable=form.downsample_x
+    ).grid(row=5, column=1, padx=4, pady=4)
+    ttk.Entry(
+        piv_frame, width=8, textvariable=form.downsample_y
+    ).grid(row=5, column=2, padx=4, pady=4)
+    ttk.Entry(
+        piv_frame, width=8, textvariable=form.downsample_z
+    ).grid(row=5, column=3, padx=4, pady=4)
 
     ttk.Label(piv_frame, text="Background filter").grid(row=6, column=0, sticky="w")
     background_combo = ttk.Combobox(
@@ -337,20 +346,6 @@ def _read_float(var: tk.Variable, field_name: str) -> float:
     except Exception as exc:
         raise ValueError(f"Invalid float for {field_name}.") from exc
 
-def _read_downsample_factor(var: tk.Variable) -> int:
-    """Read a factor-of downsampling value such as 1×, 2×, 3×, or 4×."""
-    text = str(var.get()).strip().lower().replace("×", "").replace("x", "")
-
-    try:
-        value = int(text)
-    except Exception as exc:
-        raise ValueError("Invalid downsampling factor.") from exc
-
-    if value < 1:
-        raise ValueError("Downsampling factor must be at least 1.")
-
-    return value
-
 def set_sn_controls_enabled(form: ParamsFormState, *, enabled: bool) -> None:
     """Enable or disable SN-related controls."""
     state = "normal" if enabled else "disabled"
@@ -411,6 +406,10 @@ def build_workflow_params(
     step_y = _read_int(form.step_y, "step Y")
     step_z = _read_int(form.step_z, "step Z")
 
+    downsample_x = _read_int(form.downsample_x, "downsampling X")
+    downsample_y = _read_int(form.downsample_y, "downsampling Y")
+    downsample_z = _read_int(form.downsample_z, "downsampling Z")
+
     average_spatial_radius = max(
         0,
         _read_int(form.average_spatial_radius, "spatio-temporal spatial radius"),
@@ -427,10 +426,12 @@ def build_workflow_params(
         inter_size = (inter_y, inter_x)
         search_margin = (search_y, search_x)
         step = (step_y, step_x)
+        downsample_factor = (downsample_y, downsample_x)
     else:
         inter_size = (inter_z, inter_y, inter_x)
         search_margin = (search_z, search_y, search_x)
         step = (step_z, step_y, step_x)
+        downsample_factor = (downsample_z, downsample_y, downsample_x)
 
     params = WorkflowParams(
         run=PIVRunParams(
@@ -440,7 +441,7 @@ def build_workflow_params(
             compute_sn=bool(form.compute_sn.get()),
             corr_alg=str(form.corr_alg.get()).strip() or "nsqecc",
             background_filter=str(form.background_filter.get()).strip() or "Off",
-            downsample_factor=_read_downsample_factor(form.downsample_factor),
+            downsample_factor=downsample_factor,
         ),
         postprocess=PostProcessParams(
             median_despike=MedianDespikeParams(
