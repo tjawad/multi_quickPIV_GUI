@@ -233,7 +233,7 @@ sample_001.vtk
 sample_002.vtk
 ```
 
-The 2D VTK files contain a flat vector field with Z = 0. In ParaView, apply Glyph, set Orientation Array to directions, and set Scale Array to direction_mag.
+The 2D VTK files contain a flat vector field with Z = 0. In ParaView, apply Glyph, set Orientation Array to `displacement`, and set Scale Array to `displacement_mag`.
 
 ## Visualizing 3D PIV results in ParaView
 
@@ -250,19 +250,19 @@ A typical ParaView workflow is:
 7. Keep only the range `1` to `1`.
 8. Click **Apply**.
 9. Apply **Glyph** to the thresholded data.
-10. Set **Orientation Array** to `directions`. This tells ParaView which way each PIV vector points.
-11. Set **Scale Array** to `direction_mag`. This scales arrow length by the displacement magnitude instead of drawing all arrows at the same size.
+10. Set **Orientation Array** to `displacement`. This tells ParaView which way each PIV vector points.
+11. Set **Scale Array** to `displacement_mag`. This scales arrow length by the displacement magnitude instead of drawing all arrows at the same size.
 12. Adjust the glyph scale factor as needed.
-13. Optionally color by `direction_mag`.
+13. Optionally color by `displacement_mag`.
 
 The VTK export includes these arrays:
 
 - `finite_mask`: marks vectors with finite numeric components
 - `valid_interrogation`: marks interrogation volumes that passed the Background filter
-- `directions`: vector array used by ParaView Glyph to orient arrows
-- `direction_mag`: displacement magnitude of each vector, used to scale or color glyphs
+- `displacement`: vector array used by ParaView Glyph to orient arrows
+- `displacement_mag`: displacement magnitude of each vector, used to scale or color glyphs
 
-`direction_mag` represents displacement magnitude in voxel units per frame pair; physical velocity requires voxel-size and time-interval calibration.
+`displacement_mag` represents displacement magnitude in voxel units per frame pair; physical velocity requires voxel-size and time-interval calibration.
 
 For batch 3D PIV results, the GUI writes one VTK file per processed frame pair. Open the desired time-pair file in ParaView, or load multiple files if you want to inspect several computed vector fields.
 
@@ -273,7 +273,7 @@ The main PIV parameters are:
 - **interSize**: size of the interrogation window in pixels.
 - **searchMargin**: search area around the interrogation window.
 - **step**: spacing between neighboring vectors.
-- **Downsampling**: factor-of pre-PIV downsampling. `1×` means no downsampling.
+- **Downsampling X/Y/Z**: per-axis factor-of pre-PIV downsampling. A value of `1` means no downsampling on that axis.
 - **Background filter**: skips low-signal interrogation regions before PIV. Available levels are `Off`, `Low`, `Medium`, `High`, and `Very High`.
 - **computeSN**: enables signal-to-noise computation in the Julia backend.
 
@@ -301,11 +301,15 @@ Default settings depend on the selected workflow:
 
 ```text
 2D PIV defaults:
-  Downsampling = 1×
+  Downsampling X = 1
+  Downsampling Y = 1
+  Downsampling Z = 1
   Background filter = Off
 
 3D PIV defaults:
-  Downsampling = 3×
+  Downsampling X = 3
+  Downsampling Y = 3
+  Downsampling Z = 3
   Background filter = High
 ```
 
@@ -414,7 +418,7 @@ SN:
   None, as expected for 3D mode
 ```
 
-Recent 3D VTK exports also include `finite_mask`, `valid_interrogation`, `directions`, and `direction_mag`, allowing ParaView users to threshold out skipped/background interrogation volumes before applying Glyph.
+Recent 3D VTK exports also include `finite_mask`, `valid_interrogation`, `displacement`, and `displacement_mag`, allowing ParaView users to threshold out skipped/background interrogation volumes before applying Glyph.
 
 The cropped validation data are not included in the repository because microscopy datasets are large and the `test_data/` folder is intentionally ignored by Git.
 

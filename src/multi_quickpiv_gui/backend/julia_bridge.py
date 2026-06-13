@@ -62,9 +62,6 @@ def _julia_env_dir() -> Path:
 def _ensure_julia_bindir_on_path() -> None:
     """
     Ensure Julia's real bin directory is on PATH.
-
-    This mirrors the working quick_PIV_GUI_v3.3 approach for Windows + JuliaUp
-    embedded via PyJulia.
     """
     julia_exe_override = os.environ.get("JULIA_EXE")
     if julia_exe_override and os.path.exists(julia_exe_override):

@@ -305,8 +305,8 @@ def vector_field_2d_to_vtk(
 
     VTK arrays written:
     - finite_mask
-    - directions
-    - direction_mag
+    - displacement
+    - displacement_mag
     """
     u_arr = np.asarray(u, dtype=np.float64)
     v_arr = np.asarray(v, dtype=np.float64)
@@ -334,7 +334,7 @@ def vector_field_2d_to_vtk(
 
     u_write = np.where(finite_arr, u_arr, 0.0)
     v_write = np.where(finite_arr, v_arr, 0.0)
-    direction_mag = backend_vector_magnitudes(u_write, v_write)
+    displacement_mag = backend_vector_magnitudes(u_write, v_write)
 
     ny, nx = u_arr.shape
     npoints = int(u_arr.size)
@@ -368,7 +368,7 @@ def vector_field_2d_to_vtk(
             for x in range(nx):
                 io.write(f"{1 if finite_arr[y, x] else 0}\n")
 
-        io.write("VECTORS directions double\n")
+        io.write("VECTORS displacement double\n")
         for y in range(ny):
             for x in range(nx):
                 io.write(
@@ -377,11 +377,11 @@ def vector_field_2d_to_vtk(
                     "0.0\n"
                 )
 
-        io.write("SCALARS direction_mag double 1\n")
+        io.write("SCALARS displacement_mag double 1\n")
         io.write("LOOKUP_TABLE default\n")
         for y in range(ny):
             for x in range(nx):
-                io.write(f"{direction_mag[y, x].item()}\n")
+                io.write(f"{displacement_mag[y, x].item()}\n")
 
     return ExportPath(path=out_path)
 
@@ -403,8 +403,8 @@ def vector_field_to_vtk(
     VTK arrays written:
     - finite_mask
     - valid_interrogation
-    - directions
-    - direction_mag
+    - displacement
+    - displacement_mag
     """
     u_arr = np.asarray(u, dtype=np.float64)
     v_arr = np.asarray(v, dtype=np.float64)
@@ -434,7 +434,7 @@ def vector_field_to_vtk(
     v_write = np.where(finite_arr, v_arr, 0.0)
     w_write = np.where(finite_arr, w_arr, 0.0)
 
-    direction_mag = backend_vector_magnitudes(u_write, v_write, w=w_write)
+    displacement_mag = backend_vector_magnitudes(u_write, v_write, w=w_write)
 
     data_type = "double"
 
@@ -473,7 +473,7 @@ def vector_field_to_vtk(
                 for x in range(nx):
                     io.write(f"{int(valid_interrogation_arr[z, y, x])}\n")
 
-        io.write(f"VECTORS directions {data_type}\n")
+        io.write(f"VECTORS displacement {data_type}\n")
         for z in range(nz):
             for y in range(ny):
                 for x in range(nx):
@@ -484,12 +484,12 @@ def vector_field_to_vtk(
                         f"{w_write[z, y, x].item()}\n"
                     )
 
-        io.write("SCALARS direction_mag double 1\n")
+        io.write("SCALARS displacement_mag double 1\n")
         io.write("LOOKUP_TABLE default\n")
         for z in range(nz):
             for y in range(ny):
                 for x in range(nx):
-                    io.write(f"{direction_mag[z, y, x].item()}\n")
+                    io.write(f"{displacement_mag[z, y, x].item()}\n")
 
     return ExportPath(path=out_path)
 
